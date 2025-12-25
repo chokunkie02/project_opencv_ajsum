@@ -142,7 +142,7 @@
     <ClInclude Include="popup1.h">
       <FileType>CppForm</FileType>
     </ClInclude>
-    <ClInclude Include="UploadForm.h">
+    <ClInclude Include="online1.h">
       <FileType>CppForm</FileType>
     </ClInclude>
     <ClInclude Include="pch.h" />
@@ -181,8 +181,8 @@
     <EmbeddedResource Include="popup1.resx">
       <DependentUpon>popup1.h</DependentUpon>
     </EmbeddedResource>
-    <EmbeddedResource Include="UploadForm.resx">
-      <DependentUpon>UploadForm.h</DependentUpon>
+    <EmbeddedResource Include="online1.resx">
+      <DependentUpon>online1.h</DependentUpon>
     </EmbeddedResource>
   </ItemGroup>
   <ItemGroup>

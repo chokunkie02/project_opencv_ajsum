@@ -29,7 +29,7 @@
     <ClInclude Include="MyForm.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="UploadForm.h">
+    <ClInclude Include="online1.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="CameraConnectionHelper.h">
