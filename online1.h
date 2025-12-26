@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <direct.h>  // For _getcwd
 #include "BYTETracker.h"
 #include "ParkingSlot.h"
 
@@ -84,7 +85,7 @@ static cv::Mat FormatToLetterbox(const cv::Mat& source, int width, int height, f
 	int new_unpad_h = (int)round(source.rows * r);
 
 	dw = (width - new_unpad_w) / 2;
-	dh = (height - new_unpad_h) / 2;
+ dh = (height - new_unpad_h) / 2;
 
 	cv::Mat resized;
 	if (source.cols != new_unpad_w || source.rows != new_unpad_h) {
@@ -1072,6 +1073,16 @@ namespace ConsoleApplication3 {
 	private: System::Void btnLoadParkingTemplate_Click(System::Object^ sender, System::EventArgs^ e) {
 		OpenFileDialog^ ofd = gcnew OpenFileDialog();
 		ofd->Filter = "Parking Template|*.xml";
+		
+		// ใช้ full path
+		char buffer[MAX_PATH];
+		_getcwd(buffer, MAX_PATH);
+		std::string currentDir(buffer);
+		std::string folder = currentDir + "\\parking_templates";
+		
+		ofd->InitialDirectory = gcnew String(folder.c_str());
+		ofd->Title = "Load Parking Template";
+	
 		if (ofd->ShowDialog() == System::Windows::Forms::DialogResult::OK) {
 			std::string fileName = msclr::interop::marshal_as<std::string>(ofd->FileName);
 			if (LoadParkingTemplate_Online(fileName)) {

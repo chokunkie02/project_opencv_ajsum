@@ -319,12 +319,15 @@ namespace ConsoleApplication3 {
 		}
 #pragma endregion
 
-	// *** [FIXED] Helper function ?????? Template Folder ***
+	// *** [FIXED] Helper function to get Template Folder - ??? getcwd() ***
 	private: std::string GetTemplateFolderPath() {
-		return "parking_templates";
+		char buffer[MAX_PATH];
+		_getcwd(buffer, MAX_PATH);
+		std::string currentDir(buffer);
+		return currentDir + "\\parking_templates";
 	}
 
-	// *** [NEW] ????????????????????? Template ***
+	// *** [NEW] ????????????? Template ***
 	private: void EnsureTemplateFolderExists() {
 		try {
 			std::string folder = GetTemplateFolderPath();
@@ -346,14 +349,14 @@ namespace ConsoleApplication3 {
 		}
 	}
 
-	// *** [FIXED] ????????????? Path ?????????? Template ***
+	// *** [FIXED] ????? Path ?????????? Template ***
 	private: std::string GetTemplatePath(const std::string& filename) {
 		std::string name = filename;
 		if (name.find(".xml") == std::string::npos) {
 			name += ".xml";
 		}
 		std::string folder = GetTemplateFolderPath();
-		return folder + "/" + name;
+		return folder + "\\" + name;
 	}
 
 	private: Bitmap^ MatToBitmap(cv::Mat& mat) {
