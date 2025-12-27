@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <msclr/marshal_cppstd.h>
 #include <opencv2/opencv.hpp>
 #include <opencv2/videoio.hpp>
@@ -71,6 +71,13 @@ namespace ConsoleApplication3 {
 	private: cv::VideoCapture* liveCameraCapture;
 	private: System::Windows::Forms::Button^ btnDeleteSlot;
 	private: int selectedSlotIndex;
+	private: System::Windows::Forms::Panel^ panelStats;
+	private: System::Windows::Forms::Label^ lblEmptyCount;
+	private: System::Windows::Forms::Label^ lblNormalCount;
+	private: System::Windows::Forms::Label^ lblViolationCount;
+	private: System::Windows::Forms::Label^ lblEmptyLabel;
+	private: System::Windows::Forms::Label^ lblNormalLabel;
+	private: System::Windows::Forms::Label^ lblViolationLabel;
 
 #pragma region Windows Form Designer generated code
 		   void InitializeComponent(void)
@@ -79,6 +86,13 @@ namespace ConsoleApplication3 {
 			   this->pictureBox1 = (gcnew System::Windows::Forms::PictureBox());
 			   this->lblStatus = (gcnew System::Windows::Forms::Label());
 			   this->panel2 = (gcnew System::Windows::Forms::Panel());
+			   this->panelStats = (gcnew System::Windows::Forms::Panel());
+			   this->lblViolationCount = (gcnew System::Windows::Forms::Label());
+			   this->lblViolationLabel = (gcnew System::Windows::Forms::Label());
+			   this->lblNormalCount = (gcnew System::Windows::Forms::Label());
+			   this->lblNormalLabel = (gcnew System::Windows::Forms::Label());
+			   this->lblEmptyCount = (gcnew System::Windows::Forms::Label());
+			   this->lblEmptyLabel = (gcnew System::Windows::Forms::Label());
 			   this->btnDeleteSlot = (gcnew System::Windows::Forms::Button());
 			   this->listBoxSlots = (gcnew System::Windows::Forms::ListBox());
 			   this->label3 = (gcnew System::Windows::Forms::Label());
@@ -94,18 +108,20 @@ namespace ConsoleApplication3 {
 			   this->panel1->SuspendLayout();
 			   (cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->pictureBox1))->BeginInit();
 			   this->panel2->SuspendLayout();
+			   this->panelStats->SuspendLayout();
 			   this->SuspendLayout();
 			   // 
 			   // panel1
 			   // 
-			   this->panel1->BackColor = System::Drawing::Color::LightSteelBlue;
+			   this->panel1->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(240)), static_cast<System::Int32>(static_cast<System::Byte>(242)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(245)));
 			   this->panel1->Controls->Add(this->pictureBox1);
 			   this->panel1->Controls->Add(this->lblStatus);
 			   this->panel1->Dock = System::Windows::Forms::DockStyle::Fill;
 			   this->panel1->Location = System::Drawing::Point(0, 0);
 			   this->panel1->Name = L"panel1";
 			   this->panel1->Padding = System::Windows::Forms::Padding(10);
-			   this->panel1->Size = System::Drawing::Size(1174, 700);
+			   this->panel1->Size = System::Drawing::Size(1154, 700);
 			   this->panel1->TabIndex = 0;
 			   // 
 			   // pictureBox1
@@ -115,7 +131,7 @@ namespace ConsoleApplication3 {
 			   this->pictureBox1->Dock = System::Windows::Forms::DockStyle::Fill;
 			   this->pictureBox1->Location = System::Drawing::Point(10, 10);
 			   this->pictureBox1->Name = L"pictureBox1";
-			   this->pictureBox1->Size = System::Drawing::Size(1154, 650);
+			   this->pictureBox1->Size = System::Drawing::Size(1134, 650);
 			   this->pictureBox1->SizeMode = System::Windows::Forms::PictureBoxSizeMode::Zoom;
 			   this->pictureBox1->TabIndex = 0;
 			   this->pictureBox1->TabStop = false;
@@ -123,19 +139,23 @@ namespace ConsoleApplication3 {
 			   // 
 			   // lblStatus
 			   // 
-			   this->lblStatus->BackColor = System::Drawing::Color::LemonChiffon;
+			   this->lblStatus->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(255)), static_cast<System::Int32>(static_cast<System::Byte>(253)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(208)));
 			   this->lblStatus->Dock = System::Windows::Forms::DockStyle::Bottom;
-			   this->lblStatus->Font = (gcnew System::Drawing::Font(L"Segoe UI", 11.25F, System::Drawing::FontStyle::Bold));
+			   this->lblStatus->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10.25F, System::Drawing::FontStyle::Bold));
+			   this->lblStatus->ForeColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(70)), static_cast<System::Int32>(static_cast<System::Byte>(70)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(70)));
 			   this->lblStatus->Location = System::Drawing::Point(10, 660);
 			   this->lblStatus->Name = L"lblStatus";
-			   this->lblStatus->Size = System::Drawing::Size(1154, 30);
+			   this->lblStatus->Size = System::Drawing::Size(1134, 30);
 			   this->lblStatus->TabIndex = 1;
-			   this->lblStatus->Text = L"Status: Load image or video to start";
+			   this->lblStatus->Text = L"📌 Status: Load image or video to start";
 			   this->lblStatus->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
 			   // 
 			   // panel2
 			   // 
-			   this->panel2->BackColor = System::Drawing::Color::LightSteelBlue;
+			   this->panel2->BackColor = System::Drawing::Color::Beige;
+			   this->panel2->Controls->Add(this->panelStats);
 			   this->panel2->Controls->Add(this->btnDeleteSlot);
 			   this->panel2->Controls->Add(this->listBoxSlots);
 			   this->panel2->Controls->Add(this->label3);
@@ -149,65 +169,91 @@ namespace ConsoleApplication3 {
 			   this->panel2->Controls->Add(this->btnLoadVideo);
 			   this->panel2->Controls->Add(this->label1);
 			   this->panel2->Dock = System::Windows::Forms::DockStyle::Right;
-			   this->panel2->Location = System::Drawing::Point(1174, 0);
+			   this->panel2->Location = System::Drawing::Point(1154, 0);
 			   this->panel2->Name = L"panel2";
-			   this->panel2->Padding = System::Windows::Forms::Padding(10);
-			   this->panel2->Size = System::Drawing::Size(300, 700);
+			   this->panel2->Padding = System::Windows::Forms::Padding(12);
+			   this->panel2->Size = System::Drawing::Size(320, 700);
 			   this->panel2->TabIndex = 1;
+			   // 
+			   // panelStats
+			   // 
+			   this->panelStats->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(240)), static_cast<System::Int32>(static_cast<System::Byte>(248)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(255)));
+			   this->panelStats->BorderStyle = System::Windows::Forms::BorderStyle::FixedSingle;
+			   this->panelStats->Controls->Add(this->lblViolationCount);
+			   this->panelStats->Controls->Add(this->lblViolationLabel);
+			   this->panelStats->Controls->Add(this->lblNormalCount);
+			   this->panelStats->Controls->Add(this->lblNormalLabel);
+			   this->panelStats->Controls->Add(this->lblEmptyCount);
+			   this->panelStats->Controls->Add(this->lblEmptyLabel);
+			   this->panelStats->Location = System::Drawing::Point(15, 645);
+			   this->panelStats->Name = L"panelStats";
+			   this->panelStats->Size = System::Drawing::Size(280, 32);
+			   this->panelStats->TabIndex = 13;
+
 			   // 
 			   // btnDeleteSlot
 			   // 
 			   this->btnDeleteSlot->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(220)), static_cast<System::Int32>(static_cast<System::Byte>(53)),
 				   static_cast<System::Int32>(static_cast<System::Byte>(69)));
-			   this->btnDeleteSlot->FlatStyle = System::Windows::Forms::FlatStyle::Flat;
-			   this->btnDeleteSlot->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10.75F, System::Drawing::FontStyle::Bold));
-			   this->btnDeleteSlot->ForeColor = System::Drawing::Color::White;
-			   this->btnDeleteSlot->Location = System::Drawing::Point(158, 373);
-			   this->btnDeleteSlot->Name = L"btnDeleteSlot";
-			   this->btnDeleteSlot->Size = System::Drawing::Size(130, 30);
-			   this->btnDeleteSlot->TabIndex = 12;
-			   this->btnDeleteSlot->Text = L"Delete Selected";
-			   this->btnDeleteSlot->UseVisualStyleBackColor = false;
 			   this->btnDeleteSlot->Enabled = false;
+			   this->btnDeleteSlot->FlatAppearance->BorderSize = 0;
+			   this->btnDeleteSlot->FlatStyle = System::Windows::Forms::FlatStyle::Flat;
+			   this->btnDeleteSlot->Font = (gcnew System::Drawing::Font(L"Segoe UI", 9.75F, System::Drawing::FontStyle::Bold));
+			   this->btnDeleteSlot->ForeColor = System::Drawing::Color::White;
+			   this->btnDeleteSlot->Location = System::Drawing::Point(160, 374);
+			   this->btnDeleteSlot->Name = L"btnDeleteSlot";
+			   this->btnDeleteSlot->Size = System::Drawing::Size(135, 32);
+			   this->btnDeleteSlot->TabIndex = 12;
+			   this->btnDeleteSlot->Text = L"🗑️ Delete";
+			   this->btnDeleteSlot->UseVisualStyleBackColor = false;
 			   this->btnDeleteSlot->Click += gcnew System::EventHandler(this, &ParkingSetupForm::btnDeleteSlot_Click);
 			   // 
 			   // listBoxSlots
 			   // 
+			   this->listBoxSlots->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(248)), static_cast<System::Int32>(static_cast<System::Byte>(249)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(250)));
+			   this->listBoxSlots->BorderStyle = System::Windows::Forms::BorderStyle::FixedSingle;
 			   this->listBoxSlots->Font = (gcnew System::Drawing::Font(L"Consolas", 9.75F));
 			   this->listBoxSlots->FormattingEnabled = true;
 			   this->listBoxSlots->ItemHeight = 15;
-			   this->listBoxSlots->Location = System::Drawing::Point(13, 430);
+			   this->listBoxSlots->Location = System::Drawing::Point(15, 430);
 			   this->listBoxSlots->Name = L"listBoxSlots";
-			   this->listBoxSlots->Size = System::Drawing::Size(274, 244);
+			   this->listBoxSlots->Size = System::Drawing::Size(280, 227);
 			   this->listBoxSlots->TabIndex = 11;
 			   this->listBoxSlots->SelectedIndexChanged += gcnew System::EventHandler(this, &ParkingSetupForm::listBoxSlots_SelectedIndexChanged);
 			   // 
 			   // label3
 			   // 
 			   this->label3->AutoSize = true;
-			   this->label3->Font = (gcnew System::Drawing::Font(L"Segoe UI", 12, System::Drawing::FontStyle::Bold));
-			   this->label3->Location = System::Drawing::Point(13, 406);
+			   this->label3->Font = (gcnew System::Drawing::Font(L"Segoe UI", 11, System::Drawing::FontStyle::Bold));
+			   this->label3->ForeColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(33)), static_cast<System::Int32>(static_cast<System::Byte>(33)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(33)));
+			   this->label3->Location = System::Drawing::Point(15, 405);
 			   this->label3->Name = L"label3";
-			   this->label3->Size = System::Drawing::Size(114, 21);
+			   this->label3->Size = System::Drawing::Size(126, 20);
 			   this->label3->TabIndex = 10;
-			   this->label3->Text = L"Parking Slots:";
+			   this->label3->Text = L"📍 Parking Slots";
 			   this->label3->Click += gcnew System::EventHandler(this, &ParkingSetupForm::label3_Click);
 			   // 
 			   // txtDescription
 			   // 
+			   this->txtDescription->BorderStyle = System::Windows::Forms::BorderStyle::FixedSingle;
 			   this->txtDescription->Font = (gcnew System::Drawing::Font(L"Segoe UI", 9.75F));
-			   this->txtDescription->Location = System::Drawing::Point(13, 305);
+			   this->txtDescription->Location = System::Drawing::Point(15, 308);
 			   this->txtDescription->Multiline = true;
 			   this->txtDescription->Name = L"txtDescription";
-			   this->txtDescription->Size = System::Drawing::Size(274, 60);
+			   this->txtDescription->Size = System::Drawing::Size(280, 55);
 			   this->txtDescription->TabIndex = 9;
 			   this->txtDescription->Text = L"Parking area for ...";
 			   // 
 			   // label2
 			   // 
 			   this->label2->AutoSize = true;
-			   this->label2->Font = (gcnew System::Drawing::Font(L"Segoe UI", 9.75F, System::Drawing::FontStyle::Bold));
-			   this->label2->Location = System::Drawing::Point(13, 285);
+			   this->label2->Font = (gcnew System::Drawing::Font(L"Segoe UI", 9.5F, System::Drawing::FontStyle::Bold));
+			   this->label2->ForeColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(70)), static_cast<System::Int32>(static_cast<System::Byte>(70)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(70)));
+			   this->label2->Location = System::Drawing::Point(15, 288);
 			   this->label2->Name = L"label2";
 			   this->label2->Size = System::Drawing::Size(83, 17);
 			   this->label2->TabIndex = 8;
@@ -215,38 +261,43 @@ namespace ConsoleApplication3 {
 			   // 
 			   // txtTemplateName
 			   // 
-			   this->txtTemplateName->Font = (gcnew System::Drawing::Font(L"Segoe UI", 11.25F));
-			   this->txtTemplateName->Location = System::Drawing::Point(13, 255);
+			   this->txtTemplateName->BorderStyle = System::Windows::Forms::BorderStyle::FixedSingle;
+			   this->txtTemplateName->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10.75F));
+			   this->txtTemplateName->Location = System::Drawing::Point(15, 259);
 			   this->txtTemplateName->Name = L"txtTemplateName";
-			   this->txtTemplateName->Size = System::Drawing::Size(274, 27);
+			   this->txtTemplateName->Size = System::Drawing::Size(280, 27);
 			   this->txtTemplateName->TabIndex = 7;
 			   this->txtTemplateName->Text = L"ParkingTemplate_1";
 			   // 
 			   // btnLoadTemplate
 			   // 
-			   this->btnLoadTemplate->BackColor = System::Drawing::Color::Beige;
+			   this->btnLoadTemplate->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(100)), static_cast<System::Int32>(static_cast<System::Byte>(150)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(255)));
+			   this->btnLoadTemplate->FlatAppearance->BorderSize = 0;
 			   this->btnLoadTemplate->FlatStyle = System::Windows::Forms::FlatStyle::Flat;
-			   this->btnLoadTemplate->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10.75F, System::Drawing::FontStyle::Bold));
+			   this->btnLoadTemplate->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10.25F, System::Drawing::FontStyle::Bold));
 			   this->btnLoadTemplate->ForeColor = System::Drawing::Color::White;
-			   this->btnLoadTemplate->Location = System::Drawing::Point(13, 192);
+			   this->btnLoadTemplate->Location = System::Drawing::Point(15, 198);
 			   this->btnLoadTemplate->Name = L"btnLoadTemplate";
-			   this->btnLoadTemplate->Size = System::Drawing::Size(277, 40);
+			   this->btnLoadTemplate->Size = System::Drawing::Size(280, 40);
 			   this->btnLoadTemplate->TabIndex = 6;
-			   this->btnLoadTemplate->Text = L" Load Template";
+			   this->btnLoadTemplate->Text = L"📂 Load Template";
 			   this->btnLoadTemplate->UseVisualStyleBackColor = false;
 			   this->btnLoadTemplate->Click += gcnew System::EventHandler(this, &ParkingSetupForm::btnLoadTemplate_Click);
 			   // 
 			   // btnSaveTemplate
 			   // 
-			   this->btnSaveTemplate->BackColor = System::Drawing::Color::LimeGreen;
+			   this->btnSaveTemplate->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(40)), static_cast<System::Int32>(static_cast<System::Byte>(167)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(69)));
+			   this->btnSaveTemplate->FlatAppearance->BorderSize = 0;
 			   this->btnSaveTemplate->FlatStyle = System::Windows::Forms::FlatStyle::Flat;
-			   this->btnSaveTemplate->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10.75F, System::Drawing::FontStyle::Bold));
+			   this->btnSaveTemplate->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10.25F, System::Drawing::FontStyle::Bold));
 			   this->btnSaveTemplate->ForeColor = System::Drawing::Color::White;
-			   this->btnSaveTemplate->Location = System::Drawing::Point(158, 146);
+			   this->btnSaveTemplate->Location = System::Drawing::Point(160, 150);
 			   this->btnSaveTemplate->Name = L"btnSaveTemplate";
-			   this->btnSaveTemplate->Size = System::Drawing::Size(130, 40);
+			   this->btnSaveTemplate->Size = System::Drawing::Size(135, 40);
 			   this->btnSaveTemplate->TabIndex = 5;
-			   this->btnSaveTemplate->Text = L"Save Template";
+			   this->btnSaveTemplate->Text = L"💾 Save";
 			   this->btnSaveTemplate->UseVisualStyleBackColor = false;
 			   this->btnSaveTemplate->Click += gcnew System::EventHandler(this, &ParkingSetupForm::btnSaveTemplate_Click);
 			   // 
@@ -254,55 +305,162 @@ namespace ConsoleApplication3 {
 			   // 
 			   this->btnClearAll->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(220)), static_cast<System::Int32>(static_cast<System::Byte>(53)),
 				   static_cast<System::Int32>(static_cast<System::Byte>(69)));
+			   this->btnClearAll->FlatAppearance->BorderSize = 0;
 			   this->btnClearAll->FlatStyle = System::Windows::Forms::FlatStyle::Flat;
-			   this->btnClearAll->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10.75F, System::Drawing::FontStyle::Bold));
+			   this->btnClearAll->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10.25F, System::Drawing::FontStyle::Bold));
 			   this->btnClearAll->ForeColor = System::Drawing::Color::White;
-			   this->btnClearAll->Location = System::Drawing::Point(13, 146);
+			   this->btnClearAll->Location = System::Drawing::Point(15, 150);
 			   this->btnClearAll->Name = L"btnClearAll";
-			   this->btnClearAll->Size = System::Drawing::Size(130, 40);
+			   this->btnClearAll->Size = System::Drawing::Size(135, 40);
 			   this->btnClearAll->TabIndex = 3;
-			   this->btnClearAll->Text = L"Clear All";
+			   this->btnClearAll->Text = L"🗑️ Clear All";
 			   this->btnClearAll->UseVisualStyleBackColor = false;
 			   this->btnClearAll->Click += gcnew System::EventHandler(this, &ParkingSetupForm::btnClearAll_Click);
 			   // 
 			   // btnLoadLive
 			   // 
-			   this->btnLoadLive->BackColor = System::Drawing::Color::MistyRose;
+			   this->btnLoadLive->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(255)), static_cast<System::Int32>(static_cast<System::Byte>(193)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(7)));
+			   this->btnLoadLive->FlatAppearance->BorderSize = 0;
 			   this->btnLoadLive->FlatStyle = System::Windows::Forms::FlatStyle::Flat;
-			   this->btnLoadLive->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10.75F, System::Drawing::FontStyle::Bold));
-			   this->btnLoadLive->ForeColor = System::Drawing::Color::Black;
-			   this->btnLoadLive->Location = System::Drawing::Point(157, 60);
+			   this->btnLoadLive->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10.25F, System::Drawing::FontStyle::Bold));
+			   this->btnLoadLive->ForeColor = System::Drawing::Color::White;
+			   this->btnLoadLive->Location = System::Drawing::Point(160, 62);
 			   this->btnLoadLive->Name = L"btnLoadLive";
-			   this->btnLoadLive->Size = System::Drawing::Size(130, 80);
+			   this->btnLoadLive->Size = System::Drawing::Size(135, 75);
 			   this->btnLoadLive->TabIndex = 2;
-			   this->btnLoadLive->Text = L" Load Live";
+			   this->btnLoadLive->Text = L"📷 Live\r\nCamera";
 			   this->btnLoadLive->UseVisualStyleBackColor = false;
 			   this->btnLoadLive->Click += gcnew System::EventHandler(this, &ParkingSetupForm::btnLoadLive_Click);
 			   // 
 			   // btnLoadVideo
 			   // 
-			   this->btnLoadVideo->BackColor = System::Drawing::Color::MistyRose;
+			   this->btnLoadVideo->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(76)), static_cast<System::Int32>(static_cast<System::Byte>(175)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(240)));
+			   this->btnLoadVideo->FlatAppearance->BorderSize = 0;
 			   this->btnLoadVideo->FlatStyle = System::Windows::Forms::FlatStyle::Flat;
-			   this->btnLoadVideo->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10.75F, System::Drawing::FontStyle::Bold));
-			   this->btnLoadVideo->ForeColor = System::Drawing::Color::Black;
-			   this->btnLoadVideo->Location = System::Drawing::Point(13, 60);
+			   this->btnLoadVideo->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10.25F, System::Drawing::FontStyle::Bold));
+			   this->btnLoadVideo->ForeColor = System::Drawing::Color::White;
+			   this->btnLoadVideo->Location = System::Drawing::Point(15, 62);
 			   this->btnLoadVideo->Name = L"btnLoadVideo";
-			   this->btnLoadVideo->Size = System::Drawing::Size(130, 80);
+			   this->btnLoadVideo->Size = System::Drawing::Size(135, 75);
 			   this->btnLoadVideo->TabIndex = 1;
-			   this->btnLoadVideo->Text = L"Load Video";
+			   this->btnLoadVideo->Text = L"🎬 Load\r\nVideo";
 			   this->btnLoadVideo->UseVisualStyleBackColor = false;
 			   this->btnLoadVideo->Click += gcnew System::EventHandler(this, &ParkingSetupForm::btnLoadVideo_Click);
 			   // 
 			   // label1
 			   // 
 			   this->label1->Dock = System::Windows::Forms::DockStyle::Top;
-			   this->label1->Font = (gcnew System::Drawing::Font(L"Segoe UI", 14.25F, System::Drawing::FontStyle::Bold));
-			   this->label1->Location = System::Drawing::Point(10, 10);
+			   this->label1->Font = (gcnew System::Drawing::Font(L"Segoe UI", 15.75F, System::Drawing::FontStyle::Bold));
+			   this->label1->ForeColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(33)), static_cast<System::Int32>(static_cast<System::Byte>(33)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(33)));
+			   this->label1->Location = System::Drawing::Point(12, 12);
 			   this->label1->Name = L"label1";
-			   this->label1->Size = System::Drawing::Size(280, 40);
+			   this->label1->Size = System::Drawing::Size(296, 45);
 			   this->label1->TabIndex = 0;
-			   this->label1->Text = L"Parking Setup";
+			   this->label1->Text = L"🅿️ Parking Setup";
 			   this->label1->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			   // 
+			   // panelStats
+			   // 
+			   this->panelStats->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(240)), static_cast<System::Int32>(static_cast<System::Byte>(248)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(255)));
+			   this->panelStats->BorderStyle = System::Windows::Forms::BorderStyle::FixedSingle;
+			   this->panelStats->Controls->Add(this->lblViolationCount);
+			   this->panelStats->Controls->Add(this->lblViolationLabel);
+			   this->panelStats->Controls->Add(this->lblNormalCount);
+			   this->panelStats->Controls->Add(this->lblNormalLabel);
+			   this->panelStats->Controls->Add(this->lblEmptyCount);
+			   this->panelStats->Controls->Add(this->lblEmptyLabel);
+			   this->panelStats->Location = System::Drawing::Point(15, 645);
+			   this->panelStats->Name = L"panelStats";
+			   this->panelStats->Size = System::Drawing::Size(280, 32);
+			   this->panelStats->TabIndex = 13;
+			   // 
+			   // lblViolationCount
+			   // 
+			   this->lblViolationCount->AutoSize = true;
+			   this->lblViolationCount->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(220)), static_cast<System::Int32>(static_cast<System::Byte>(53)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(69)));
+			   this->lblViolationCount->Font = (gcnew System::Drawing::Font(L"Segoe UI", 12, System::Drawing::FontStyle::Bold));
+			   this->lblViolationCount->ForeColor = System::Drawing::Color::White;
+			   this->lblViolationCount->Location = System::Drawing::Point(238, 14);
+			   this->lblViolationCount->Name = L"lblViolationCount";
+			   this->lblViolationCount->Size = System::Drawing::Size(20, 21);
+			   this->lblViolationCount->TabIndex = 5;
+			   this->lblViolationCount->Text = L"0";
+			   this->lblViolationCount->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			   // 
+			   // lblNormalCount
+			   // 
+			   this->lblNormalCount->AutoSize = true;
+			   this->lblNormalCount->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(76)), static_cast<System::Int32>(static_cast<System::Byte>(175)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(240)));
+			   this->lblNormalCount->Font = (gcnew System::Drawing::Font(L"Segoe UI", 12, System::Drawing::FontStyle::Bold));
+			   this->lblNormalCount->ForeColor = System::Drawing::Color::White;
+			   this->lblNormalCount->Location = System::Drawing::Point(98, 14);
+			   this->lblNormalCount->Name = L"lblNormalCount";
+			   this->lblNormalCount->Size = System::Drawing::Size(20, 21);
+			   this->lblNormalCount->TabIndex = 3;
+			   this->lblNormalCount->Text = L"0";
+			   this->lblNormalCount->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			   // 
+			   // lblEmptyCount
+			   // 
+			   this->lblEmptyCount->AutoSize = true;
+			   this->lblEmptyCount->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(200)), static_cast<System::Int32>(static_cast<System::Byte>(200)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(200)));
+			   this->lblEmptyCount->Font = (gcnew System::Drawing::Font(L"Segoe UI", 12, System::Drawing::FontStyle::Bold));
+			   this->lblEmptyCount->ForeColor = System::Drawing::Color::White;
+			   this->lblEmptyCount->Location = System::Drawing::Point(8, 14);
+			   this->lblEmptyCount->Name = L"lblEmptyCount";
+			   this->lblEmptyCount->Size = System::Drawing::Size(20, 21);
+			   this->lblEmptyCount->TabIndex = 1;
+			   this->lblEmptyCount->Text = L"0";
+			   this->lblEmptyCount->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			   // 
+			   // lblViolationLabel
+			   // 
+			   this->lblViolationLabel->AutoSize = true;
+			   this->lblViolationLabel->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(220)), static_cast<System::Int32>(static_cast<System::Byte>(53)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(69)));
+			   this->lblViolationLabel->Font = (gcnew System::Drawing::Font(L"Segoe UI", 7.75F, System::Drawing::FontStyle::Bold));
+			   this->lblViolationLabel->ForeColor = System::Drawing::Color::White;
+			   this->lblViolationLabel->Location = System::Drawing::Point(230, 3);
+			   this->lblViolationLabel->Name = L"lblViolationLabel";
+			   this->lblViolationLabel->Size = System::Drawing::Size(48, 12);
+			   this->lblViolationLabel->TabIndex = 4;
+			   this->lblViolationLabel->Text = L"Violation";
+			   this->lblViolationLabel->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			   // 
+			   // lblNormalLabel
+			   // 
+			   this->lblNormalLabel->AutoSize = true;
+			   this->lblNormalLabel->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(76)), static_cast<System::Int32>(static_cast<System::Byte>(175)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(240)));
+			   this->lblNormalLabel->Font = (gcnew System::Drawing::Font(L"Segoe UI", 7.75F, System::Drawing::FontStyle::Bold));
+			   this->lblNormalLabel->ForeColor = System::Drawing::Color::White;
+			   this->lblNormalLabel->Location = System::Drawing::Point(93, 3);
+			   this->lblNormalLabel->Name = L"lblNormalLabel";
+			   this->lblNormalLabel->Size = System::Drawing::Size(33, 12);
+			   this->lblNormalLabel->TabIndex = 2;
+			   this->lblNormalLabel->Text = L"Normal";
+			   this->lblNormalLabel->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			   // 
+			   // lblEmptyLabel
+			   // 
+			   this->lblEmptyLabel->AutoSize = true;
+			   this->lblEmptyLabel->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(200)), static_cast<System::Int32>(static_cast<System::Byte>(200)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(200)));
+			   this->lblEmptyLabel->Font = (gcnew System::Drawing::Font(L"Segoe UI", 7.75F, System::Drawing::FontStyle::Bold));
+			   this->lblEmptyLabel->ForeColor = System::Drawing::Color::White;
+			   this->lblEmptyLabel->Location = System::Drawing::Point(3, 3);
+			   this->lblEmptyLabel->Name = L"lblEmptyLabel";
+			   this->lblEmptyLabel->Size = System::Drawing::Size(30, 12);
+			   this->lblEmptyLabel->TabIndex = 0;
+			   this->lblEmptyLabel->Text = L"Empty";
+			   this->lblEmptyLabel->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
 			   // 
 			   // ParkingSetupForm
 			   // 
@@ -311,13 +469,16 @@ namespace ConsoleApplication3 {
 			   this->ClientSize = System::Drawing::Size(1474, 700);
 			   this->Controls->Add(this->panel1);
 			   this->Controls->Add(this->panel2);
+			   this->Controls->Add(this->panelStats);
 			   this->Name = L"ParkingSetupForm";
 			   this->StartPosition = System::Windows::Forms::FormStartPosition::CenterScreen;
-			   this->Text = L"Parking Slot Setup - Draw Parking Areas";
+			   this->Text = L"🅿️ Parking Slot Setup - Draw Parking Areas";
 			   this->panel1->ResumeLayout(false);
 			   (cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->pictureBox1))->EndInit();
 			   this->panel2->ResumeLayout(false);
 			   this->panel2->PerformLayout();
+			   this->panelStats->ResumeLayout(false);
+			   this->panelStats->PerformLayout();
 			   this->ResumeLayout(false);
 
 		   }
@@ -395,7 +556,7 @@ namespace ConsoleApplication3 {
 			cv::drawContours(display, contours, 0, cv::Scalar(0, 255, 0), 2);
 			cv::putText(display, std::to_string(slot.id), slot.getCenter(),
 				cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(255, 255, 0), 2);
-			
+
 			// Draw delete button (X) on top-right of each slot
 			cv::Point topRight = slot.getTopRight();
 			cv::Rect deleteBtn(topRight.x - 15, topRight.y - 15, 30, 30);
@@ -424,8 +585,27 @@ namespace ConsoleApplication3 {
 			String^ item = "Slot " + slot.id + " (" + slot.polygon.size() + " points)";
 			listBoxSlots->Items->Add(item);
 		}
-		lblStatus->Text = "Total Slots: " + parkingManager->getSlots().size() +
-			" | Drawing: " + (isDrawing ? "YES" : "NO");
+		int totalSlots = parkingManager->getSlots().size();
+		lblStatus->Text = "📊 Total Slots: " + totalSlots + " | Drawing: " + (isDrawing ? "✓ YES" : "✗ NO");
+		UpdateStatistics();
+	}
+
+	private: void UpdateStatistics() {
+		int emptyCount = 0, normalCount = 0, violationCount = 0;
+		for (const auto& slot : parkingManager->getSlots()) {
+			if (slot.status == SlotStatus::EMPTY) {
+				emptyCount++;
+			}
+			else if (slot.status == SlotStatus::OCCUPIED_GOOD || slot.status == SlotStatus::OCCUPIED_OK) {
+				normalCount++;
+			}
+			else if (slot.status == SlotStatus::OCCUPIED_BAD || slot.status == SlotStatus::ILLEGAL) {
+				violationCount++;
+			}
+		}
+		lblEmptyCount->Text = emptyCount.ToString();
+		lblNormalCount->Text = normalCount.ToString();
+		lblViolationCount->Text = violationCount.ToString();
 	}
 
 	private: System::Void btnLoadVideo_Click(System::Object^ sender, System::EventArgs^ e) {
@@ -698,7 +878,7 @@ namespace ConsoleApplication3 {
 			for (int i = 0; i < slots.size(); i++) {
 				cv::Point topRight = slots[i].getTopRight();
 				cv::Rect deleteBtn(topRight.x - 15, topRight.y - 15, 30, 30);
-				
+
 				if (imgX >= deleteBtn.x && imgX <= deleteBtn.x + deleteBtn.width &&
 					imgY >= deleteBtn.y && imgY <= deleteBtn.y + deleteBtn.height) {
 					// Delete this slot
@@ -762,5 +942,5 @@ namespace ConsoleApplication3 {
 			btnDeleteSlot->Enabled = false;
 		}
 	}
-};
+	};
 }
