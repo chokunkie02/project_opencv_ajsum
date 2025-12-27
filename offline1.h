@@ -204,7 +204,7 @@ static void ProcessFrame(const cv::Mat& inputFrame, long long frameSeq) {
 			cv::Mat output_t;
 			cv::transpose(output_data.reshape(1, output_data.size[1]), output_t);
 			output_data = output_t;
-			rows = output_data.rows; dimensions = output_data.cols;
+		rows = output_data.rows; dimensions = output_data.cols;
 		}
 
 		float* data = (float*)output_data.data;
@@ -390,6 +390,9 @@ namespace ConsoleApplication3 {
 			
 			isProcessing = false;
 			shouldStop = false;
+			violationsList = gcnew System::Collections::Generic::List<ViolationRecord^>();
+			violatingCarTimers = gcnew System::Collections::Generic::Dictionary<int, System::DateTime>();
+
 			BackgroundWorker^ modelLoader = gcnew BackgroundWorker();
 			modelLoader->DoWork += gcnew DoWorkEventHandler(this, &OfflineUploadForm::LoadModel_DoWork);
 			modelLoader->RunWorkerCompleted += gcnew RunWorkerCompletedEventHandler(this, &OfflineUploadForm::LoadModel_Completed);
@@ -449,6 +452,23 @@ namespace ConsoleApplication3 {
 	private: System::Windows::Forms::Timer^ cameraInitTimer;
 	private: int cameraInitCountdown = 0;
 
+	// *** [NEW] VIOLATION ALERTS SYSTEM ***
+	private: ref struct ViolationRecord {
+		int carId;
+		Bitmap^ screenshot;
+		System::String^ violationType;
+		System::DateTime captureTime;
+		int durationSeconds;
+	};
+
+	private: System::Collections::Generic::List<ViolationRecord^>^ violationsList;
+	private: System::Windows::Forms::Panel^ pnlViolationContainer;
+	private: System::Windows::Forms::FlowLayoutPanel^ flpViolations;
+	private: System::Windows::Forms::Label^ lblViolationTitle;
+	private: System::Windows::Forms::Label^ lblViolationCount;
+	private: System::Windows::Forms::Button^ btnClearViolations;
+	private: System::Collections::Generic::Dictionary<int, System::DateTime>^ violatingCarTimers;
+
 #pragma region Windows Form Designer generated code
 		   void InitializeComponent(void) {
 			   this->components = (gcnew System::ComponentModel::Container());
@@ -472,6 +492,11 @@ namespace ConsoleApplication3 {
 			   this->label3 = (gcnew System::Windows::Forms::Label());
 			   this->label2 = (gcnew System::Windows::Forms::Label());
 			   this->panel1 = (gcnew System::Windows::Forms::Panel());
+			   this->pnlViolationContainer = (gcnew System::Windows::Forms::Panel());
+			   this->lblViolationTitle = (gcnew System::Windows::Forms::Label());
+			   this->lblViolationCount = (gcnew System::Windows::Forms::Label());
+			   this->flpViolations = (gcnew System::Windows::Forms::FlowLayoutPanel());
+			   this->btnClearViolations = (gcnew System::Windows::Forms::Button());
 			   (cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->trackBar1))->BeginInit();
 			   (cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->splitContainer1))->BeginInit();
 			   this->splitContainer1->Panel1->SuspendLayout();
@@ -631,6 +656,7 @@ namespace ConsoleApplication3 {
 			   this->splitContainer1->Panel2->Controls->Add(this->btnUploadImage);
 			   this->splitContainer1->Panel2->Controls->Add(this->lblLogs);
 			   this->splitContainer1->Panel2->Controls->Add(this->panel3);
+			   this->splitContainer1->Panel2->Controls->Add(this->pnlViolationContainer);
 			   this->splitContainer1->Size = System::Drawing::Size(1443, 759);
 			   this->splitContainer1->SplitterDistance = 1009;
 			   this->splitContainer1->TabIndex = 5;
@@ -710,6 +736,59 @@ namespace ConsoleApplication3 {
 			   this->panel1->Name = L"panel1";
 			   this->panel1->Size = System::Drawing::Size(851, 484);
 			   this->panel1->TabIndex = 4;
+			   // 
+			   // pnlViolationContainer
+			   // 
+			   this->pnlViolationContainer->BackColor = System::Drawing::Color::LightSteelBlue;
+			   this->pnlViolationContainer->Location = System::Drawing::Point(12, 502);
+			   this->pnlViolationContainer->Name = L"pnlViolationContainer";
+			   this->pnlViolationContainer->Size = System::Drawing::Size(851, 225);
+			   this->pnlViolationContainer->TabIndex = 13;
+			   this->pnlViolationContainer->Controls->Add(this->flpViolations);
+			   this->pnlViolationContainer->Controls->Add(this->btnClearViolations);
+			   this->pnlViolationContainer->Controls->Add(this->lblViolationCount);
+			   this->pnlViolationContainer->Controls->Add(this->lblViolationTitle);
+			   // 
+			   // lblViolationTitle
+			   // 
+			   this->lblViolationTitle->AutoSize = true;
+			   this->lblViolationTitle->Font = (gcnew System::Drawing::Font(L"Segoe UI", 12));
+			   this->lblViolationTitle->Location = System::Drawing::Point(3, 5);
+			   this->lblViolationTitle->Name = L"lblViolationTitle";
+			   this->lblViolationTitle->Size = System::Drawing::Size(157, 21);
+			   this->lblViolationTitle->TabIndex = 0;
+			   this->lblViolationTitle->Text = L"Violation Alerts (0)";
+			   // 
+			   // lblViolationCount
+			   // 
+			   this->lblViolationCount->AutoSize = true;
+			   this->lblViolationCount->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10));
+			   this->lblViolationCount->Location = System::Drawing::Point(3, 30);
+			   this->lblViolationCount->Name = L"lblViolationCount";
+			   this->lblViolationCount->Size = System::Drawing::Size(134, 19);
+			   this->lblViolationCount->TabIndex = 1;
+			   this->lblViolationCount->Text = L"Total Violations: 0";
+			   // 
+			   // btnClearViolations
+			   // 
+			   this->btnClearViolations->BackColor = System::Drawing::Color::Tomato;
+			   this->btnClearViolations->FlatStyle = System::Windows::Forms::FlatStyle::Flat;
+			   this->btnClearViolations->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10));
+			   this->btnClearViolations->Location = System::Drawing::Point(757, 5);
+			   this->btnClearViolations->Name = L"btnClearViolations";
+			   this->btnClearViolations->Size = System::Drawing::Size(91, 27);
+			   this->btnClearViolations->TabIndex = 2;
+			   this->btnClearViolations->Text = L"Clear All";
+			   this->btnClearViolations->UseVisualStyleBackColor = false;
+			   this->btnClearViolations->Click += gcnew System::EventHandler(this, &OfflineUploadForm::btnClearViolations_Click);
+			   // 
+			   // flpViolations
+			   // 
+			   this->flpViolations->AutoScroll = true;
+			   this->flpViolations->Location = System::Drawing::Point(3, 58);
+			   this->flpViolations->Name = L"flpViolations";
+			   this->flpViolations->Size = System::Drawing::Size(845, 162);
+			   this->flpViolations->TabIndex = 3;
 			   // 
 			   // OfflineUploadForm
 			   // 
@@ -848,6 +927,11 @@ namespace ConsoleApplication3 {
 
 			if (!finalFrame.empty()) {
 				UpdatePictureBox(finalFrame);
+				// Check for violations
+				if (g_parkingEnabled_offline) {
+					cv::Mat frameCopy = finalFrame.clone();
+					CheckViolations(frameCopy);
+				}
 			}
 		}
 		catch (...) {}
@@ -973,12 +1057,128 @@ namespace ConsoleApplication3 {
 		}
 	}
 
+	// *** [NEW] VIOLATION ALERTS METHODS ***
+	private: void AddViolationRecord(int carId, cv::Mat& frameCapture, System::String^ violationType) {
+		if (frameCapture.empty()) return;
 
-private: System::Void label2_Click(System::Object^ sender, System::EventArgs^ e) {
-}
-private: System::Void label3_Click(System::Object^ sender, System::EventArgs^ e) {
-}
-private: System::Void label4_Click(System::Object^ sender, System::EventArgs^ e) {
-}
+		// Convert cv::Mat to Bitmap
+		Bitmap^ screenshot = gcnew Bitmap(frameCapture.cols, frameCapture.rows, System::Drawing::Imaging::PixelFormat::Format24bppRgb);
+		System::Drawing::Rectangle rect(0, 0, frameCapture.cols, frameCapture.rows);
+		System::Drawing::Imaging::BitmapData^ bmpData = screenshot->LockBits(rect, System::Drawing::Imaging::ImageLockMode::WriteOnly, screenshot->PixelFormat);
+
+		for (int y = 0; y < frameCapture.rows; y++) {
+			memcpy((unsigned char*)bmpData->Scan0.ToPointer() + y * bmpData->Stride, frameCapture.data + y * frameCapture.step, frameCapture.cols * 3);
+		}
+		screenshot->UnlockBits(bmpData);
+
+		// Create violation record
+		ViolationRecord^ record = gcnew ViolationRecord();
+		record->carId = carId;
+		record->screenshot = screenshot;
+		record->violationType = violationType;
+		record->captureTime = System::DateTime::Now;
+		record->durationSeconds = 0;
+
+		violationsList->Add(record);
+		RefreshViolationPanel();
+	}
+
+	private: void RefreshViolationPanel() {
+		if (!flpViolations) return;
+
+		flpViolations->Controls->Clear();
+
+		for each(ViolationRecord^ record in violationsList) {
+			// Create item panel
+			Panel^ itemPanel = gcnew Panel();
+			itemPanel->BackColor = System::Drawing::Color::White;
+			itemPanel->Size = System::Drawing::Size(250, 180);
+			itemPanel->BorderStyle = System::Windows::Forms::BorderStyle::FixedSingle;
+			itemPanel->Margin = System::Windows::Forms::Padding(5);
+
+			// Screenshot
+			PictureBox^ pbScreenshot = gcnew PictureBox();
+			pbScreenshot->Image = record->screenshot;
+			pbScreenshot->SizeMode = System::Windows::Forms::PictureBoxSizeMode::Zoom;
+			pbScreenshot->Location = System::Drawing::Point(5, 5);
+			pbScreenshot->Size = System::Drawing::Size(240, 100);
+			itemPanel->Controls->Add(pbScreenshot);
+
+			// Info label
+			Label^ lblInfo = gcnew Label();
+			lblInfo->Font = gcnew System::Drawing::Font(L"Segoe UI", 8);
+			lblInfo->Location = System::Drawing::Point(5, 110);
+			lblInfo->Size = System::Drawing::Size(240, 65);
+			lblInfo->Text = System::String::Format(L"ID: {0}\nType: {1}\nTime: {2:HH:mm:ss}\nDuration: {3}s",
+				record->carId, record->violationType, record->captureTime, record->durationSeconds);
+			itemPanel->Controls->Add(lblInfo);
+
+			flpViolations->Controls->Add(itemPanel);
+		}
+
+		lblViolationCount->Text = System::String::Format(L"Violations: {0}", violationsList->Count);
+	}
+
+	private: void CheckViolations(cv::Mat& currentFrame) {
+		AppState state;
+		{
+			std::lock_guard<std::mutex> lock(g_stateMutex);
+			state = g_appState;
+		}
+
+		// Check for overstay (> 10 seconds = 300 frames at 30fps)
+		for each(auto car in state.cars) {
+			if (car.framesStill > 300) { // 10 seconds
+				if (!violatingCarTimers->ContainsKey(car.id)) {
+					violatingCarTimers->Add(car.id, System::DateTime::Now);
+					
+					// Capture only the bounding box region
+					cv::Rect safeBbox = car.bbox & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
+					if (safeBbox.area() > 0) {
+						cv::Mat croppedFrame = currentFrame(safeBbox).clone();
+						AddViolationRecord(car.id, croppedFrame, L"Overstay");
+					}
+				}
+			}
+		}
+
+		// Check for wrong slot (parking violation)
+		for each(int violatingId in state.violatingCarIds) {
+			bool already_captured = false;
+			for each(ViolationRecord^ record in violationsList) {
+				if (record->carId == violatingId && record->violationType == L"Wrong Slot") {
+					already_captured = true;
+					break;
+				}
+			}
+
+			if (!already_captured) {
+				// Find the car with this ID and capture its bbox
+				for each(auto car in state.cars) {
+					if (car.id == violatingId) {
+						// Capture only the bounding box region
+						cv::Rect safeBbox = car.bbox & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
+						if (safeBbox.area() > 0) {
+							cv::Mat croppedFrame = currentFrame(safeBbox).clone();
+							AddViolationRecord(violatingId, croppedFrame, L"Wrong Slot");
+						}
+						break;
+					}
+				}
+			}
+		}
+
+		// Update durations
+		for each(ViolationRecord^ record in violationsList) {
+			System::TimeSpan duration = System::DateTime::Now - record->captureTime;
+			record->durationSeconds = (int)duration.TotalSeconds;
+		}
+	}
+
+	private: System::Void btnClearViolations_Click(System::Object^ sender, System::EventArgs^ e) {
+		violationsList->Clear();
+		violatingCarTimers->Clear();
+		RefreshViolationPanel();
+	}
 };
 }
