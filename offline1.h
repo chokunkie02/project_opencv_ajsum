@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <msclr/marshal_cppstd.h>
 #include <string>
 #include <vector>
@@ -226,8 +226,8 @@ static void ProcessFrame(const cv::Mat& inputFrame, long long frameSeq) {
 			}
 		 data += dimensions;
 		}
-		std::vector<int> nms;
-		cv::dnn::NMSBoxes(boxes, confs, CONF_THRESH, NMS_THRESH, nms);
+	 std::vector<int> nms;
+	 cv::dnn::NMSBoxes(boxes, confs, CONF_THRESH, NMS_THRESH, nms);
 
 		std::vector<cv::Rect> nms_boxes; std::vector<int> nms_class_ids; std::vector<float> nms_confs;
 		for (int idx : nms) {
@@ -277,7 +277,7 @@ static void ProcessFrame(const cv::Mat& inputFrame, long long frameSeq) {
 		{
 			std::lock_guard<std::mutex> stateLock(g_stateMutex);
 			g_appState.cars = trackedObjs;
-			g_appState.slotStatuses = calculatedStatuses;
+		g_appState.slotStatuses = calculatedStatuses;
 			g_appState.slotOccupancy = calculatedOccupancy;
 			g_appState.violatingCarIds = violations;
 			g_appState.frameSequence = frameSeq;
@@ -452,6 +452,11 @@ namespace ConsoleApplication3 {
 	private: System::Windows::Forms::Timer^ cameraInitTimer;
 	private: int cameraInitCountdown = 0;
 
+	// *** [NEW] TRACKBAR CONTROL VARIABLES ***
+	private: long long totalFrames = 0;
+	private: bool isTrackBarDragging = false;
+	private: bool isPlayingVideo = false;
+
 	// *** [NEW] VIOLATION ALERTS SYSTEM ***
 	private: ref struct ViolationRecord {
 		int carId;
@@ -467,11 +472,15 @@ namespace ConsoleApplication3 {
 	private: System::Windows::Forms::Label^ lblViolationTitle;
 	private: System::Windows::Forms::Label^ lblViolationCount;
 	private: System::Windows::Forms::Button^ btnClearViolations;
+	private: System::Windows::Forms::Label^ label7;
+	private: System::Windows::Forms::Label^ label6;
+	private: System::Windows::Forms::Label^ label5;
 	private: System::Collections::Generic::Dictionary<int, System::DateTime>^ violatingCarTimers;
 
 #pragma region Windows Form Designer generated code
 		   void InitializeComponent(void) {
 			   this->components = (gcnew System::ComponentModel::Container());
+			   System::ComponentModel::ComponentResourceManager^ resources = (gcnew System::ComponentModel::ComponentResourceManager(OfflineUploadForm::typeid));
 			   this->timer1 = (gcnew System::Windows::Forms::Timer(this->components));
 			   this->processingWorker = (gcnew System::ComponentModel::BackgroundWorker());
 			   this->btnPrevFrame = (gcnew System::Windows::Forms::Button());
@@ -488,21 +497,25 @@ namespace ConsoleApplication3 {
 			   this->splitContainer1 = (gcnew System::Windows::Forms::SplitContainer());
 			   this->label1 = (gcnew System::Windows::Forms::Label());
 			   this->pictureBox1 = (gcnew System::Windows::Forms::PictureBox());
+			   this->label7 = (gcnew System::Windows::Forms::Label());
+			   this->label6 = (gcnew System::Windows::Forms::Label());
+			   this->label5 = (gcnew System::Windows::Forms::Label());
 			   this->label4 = (gcnew System::Windows::Forms::Label());
 			   this->label3 = (gcnew System::Windows::Forms::Label());
 			   this->label2 = (gcnew System::Windows::Forms::Label());
-			   this->panel1 = (gcnew System::Windows::Forms::Panel());
 			   this->pnlViolationContainer = (gcnew System::Windows::Forms::Panel());
-			   this->lblViolationTitle = (gcnew System::Windows::Forms::Label());
-			   this->lblViolationCount = (gcnew System::Windows::Forms::Label());
 			   this->flpViolations = (gcnew System::Windows::Forms::FlowLayoutPanel());
 			   this->btnClearViolations = (gcnew System::Windows::Forms::Button());
+			   this->lblViolationCount = (gcnew System::Windows::Forms::Label());
+			   this->lblViolationTitle = (gcnew System::Windows::Forms::Label());
+			   this->panel1 = (gcnew System::Windows::Forms::Panel());
 			   (cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->trackBar1))->BeginInit();
 			   (cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->splitContainer1))->BeginInit();
 			   this->splitContainer1->Panel1->SuspendLayout();
 			   this->splitContainer1->Panel2->SuspendLayout();
 			   this->splitContainer1->SuspendLayout();
 			   (cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->pictureBox1))->BeginInit();
+			   this->pnlViolationContainer->SuspendLayout();
 			   this->SuspendLayout();
 			   // 
 			   // timer1
@@ -549,11 +562,11 @@ namespace ConsoleApplication3 {
 			   // 
 			   // btnPlayPause
 			   // 
+			   this->btnPlayPause->Image = (cli::safe_cast<System::Drawing::Image^>(resources->GetObject(L"btnPlayPause.Image")));
 			   this->btnPlayPause->Location = System::Drawing::Point(554, 47);
 			   this->btnPlayPause->Name = L"btnPlayPause";
 			   this->btnPlayPause->Size = System::Drawing::Size(45, 44);
 			   this->btnPlayPause->TabIndex = 3;
-			   this->btnPlayPause->Text = L"?";
 			   this->btnPlayPause->Click += gcnew System::EventHandler(this, &OfflineUploadForm::btnPlayPause_Click);
 			   // 
 			   // trackBar1
@@ -562,6 +575,9 @@ namespace ConsoleApplication3 {
 			   this->trackBar1->Name = L"trackBar1";
 			   this->trackBar1->Size = System::Drawing::Size(217, 45);
 			   this->trackBar1->TabIndex = 4;
+			   this->trackBar1->Scroll += gcnew System::EventHandler(this, &OfflineUploadForm::trackBar1_Scroll);
+			   this->trackBar1->MouseDown += gcnew System::Windows::Forms::MouseEventHandler(this, &OfflineUploadForm::trackBar1_MouseDown);
+			   this->trackBar1->MouseUp += gcnew System::Windows::Forms::MouseEventHandler(this, &OfflineUploadForm::trackBar1_MouseUp);
 			   // 
 			   // lblLogs
 			   // 
@@ -647,6 +663,9 @@ namespace ConsoleApplication3 {
 			   // splitContainer1.Panel2
 			   // 
 			   this->splitContainer1->Panel2->BackColor = System::Drawing::Color::LightSteelBlue;
+			   this->splitContainer1->Panel2->Controls->Add(this->label7);
+			   this->splitContainer1->Panel2->Controls->Add(this->label6);
+			   this->splitContainer1->Panel2->Controls->Add(this->label5);
 			   this->splitContainer1->Panel2->Controls->Add(this->label4);
 			   this->splitContainer1->Panel2->Controls->Add(this->label3);
 			   this->splitContainer1->Panel2->Controls->Add(this->label2);
@@ -662,18 +681,18 @@ namespace ConsoleApplication3 {
 			   this->splitContainer1->TabIndex = 5;
 			   // 
 			   // label1
-               // 
-               this->label1->AutoSize = true;
-               this->label1->BackColor = System::Drawing::Color::White;
-               this->label1->Font = (gcnew System::Drawing::Font(L"Segoe UI", 16.25F, System::Drawing::FontStyle::Bold, System::Drawing::GraphicsUnit::Point,
-                   static_cast<System::Byte>(0)));
-               this->label1->ForeColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(45)), static_cast<System::Int32>(static_cast<System::Byte>(45)),
-                   static_cast<System::Int32>(static_cast<System::Byte>(48)));
-               this->label1->Location = System::Drawing::Point(76, 41);
-               this->label1->Name = L"label1";
-               this->label1->Size = System::Drawing::Size(102, 30);
-               this->label1->TabIndex = 6;
-               this->label1->Text = L"camera1";
+			   // 
+			   this->label1->AutoSize = true;
+			   this->label1->BackColor = System::Drawing::Color::White;
+			   this->label1->Font = (gcnew System::Drawing::Font(L"Segoe UI", 16.25F, System::Drawing::FontStyle::Bold, System::Drawing::GraphicsUnit::Point,
+				   static_cast<System::Byte>(0)));
+			   this->label1->ForeColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(45)), static_cast<System::Int32>(static_cast<System::Byte>(45)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(48)));
+			   this->label1->Location = System::Drawing::Point(76, 41);
+			   this->label1->Name = L"label1";
+			   this->label1->Size = System::Drawing::Size(102, 30);
+			   this->label1->TabIndex = 6;
+			   this->label1->Text = L"camera1";
 			   // 
 			   // pictureBox1
 			   // 
@@ -685,6 +704,33 @@ namespace ConsoleApplication3 {
 			   this->pictureBox1->SizeMode = System::Windows::Forms::PictureBoxSizeMode::Zoom;
 			   this->pictureBox1->TabIndex = 1;
 			   this->pictureBox1->TabStop = false;
+			   // 
+			   // label7
+			   // 
+			   this->label7->AutoSize = true;
+			   this->label7->Location = System::Drawing::Point(284, 125);
+			   this->label7->Name = L"label7";
+			   this->label7->Size = System::Drawing::Size(85, 13);
+			   this->label7->TabIndex = 16;
+			   this->label7->Text = L"lblViolationCount";
+			   // 
+			   // label6
+			   // 
+			   this->label6->AutoSize = true;
+			   this->label6->Location = System::Drawing::Point(159, 125);
+			   this->label6->Name = L"label6";
+			   this->label6->Size = System::Drawing::Size(78, 13);
+			   this->label6->TabIndex = 15;
+			   this->label6->Text = L"lblNormalCount";
+			   // 
+			   // label5
+			   // 
+			   this->label5->AutoSize = true;
+			   this->label5->Location = System::Drawing::Point(58, 125);
+			   this->label5->Name = L"label5";
+			   this->label5->Size = System::Drawing::Size(74, 13);
+			   this->label5->TabIndex = 14;
+			   this->label5->Text = L"lblEmptyCount";
 			   // 
 			   // label4
 			   // 
@@ -729,45 +775,25 @@ namespace ConsoleApplication3 {
 			   this->label2->TabIndex = 9;
 			   this->label2->Text = L"Empty";
 			   // 
-			   // panel1
-			   // 
-			   this->panel1->BackColor = System::Drawing::Color::LightSteelBlue;
-			   this->panel1->Location = System::Drawing::Point(12, 12);
-			   this->panel1->Name = L"panel1";
-			   this->panel1->Size = System::Drawing::Size(851, 484);
-			   this->panel1->TabIndex = 4;
-			   // 
 			   // pnlViolationContainer
 			   // 
 			   this->pnlViolationContainer->BackColor = System::Drawing::Color::LightSteelBlue;
-			   this->pnlViolationContainer->Location = System::Drawing::Point(12, 502);
-			   this->pnlViolationContainer->Name = L"pnlViolationContainer";
-			   this->pnlViolationContainer->Size = System::Drawing::Size(851, 225);
-			   this->pnlViolationContainer->TabIndex = 13;
 			   this->pnlViolationContainer->Controls->Add(this->flpViolations);
 			   this->pnlViolationContainer->Controls->Add(this->btnClearViolations);
 			   this->pnlViolationContainer->Controls->Add(this->lblViolationCount);
 			   this->pnlViolationContainer->Controls->Add(this->lblViolationTitle);
+			   this->pnlViolationContainer->Location = System::Drawing::Point(12, 502);
+			   this->pnlViolationContainer->Name = L"pnlViolationContainer";
+			   this->pnlViolationContainer->Size = System::Drawing::Size(851, 225);
+			   this->pnlViolationContainer->TabIndex = 13;
 			   // 
-			   // lblViolationTitle
+			   // flpViolations
 			   // 
-			   this->lblViolationTitle->AutoSize = true;
-			   this->lblViolationTitle->Font = (gcnew System::Drawing::Font(L"Segoe UI", 12));
-			   this->lblViolationTitle->Location = System::Drawing::Point(3, 5);
-			   this->lblViolationTitle->Name = L"lblViolationTitle";
-			   this->lblViolationTitle->Size = System::Drawing::Size(157, 21);
-			   this->lblViolationTitle->TabIndex = 0;
-			   this->lblViolationTitle->Text = L"Violation Alerts (0)";
-			   // 
-			   // lblViolationCount
-			   // 
-			   this->lblViolationCount->AutoSize = true;
-			   this->lblViolationCount->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10));
-			   this->lblViolationCount->Location = System::Drawing::Point(3, 30);
-			   this->lblViolationCount->Name = L"lblViolationCount";
-			   this->lblViolationCount->Size = System::Drawing::Size(134, 19);
-			   this->lblViolationCount->TabIndex = 1;
-			   this->lblViolationCount->Text = L"Total Violations: 0";
+			   this->flpViolations->AutoScroll = true;
+			   this->flpViolations->Location = System::Drawing::Point(3, 58);
+			   this->flpViolations->Name = L"flpViolations";
+			   this->flpViolations->Size = System::Drawing::Size(845, 162);
+			   this->flpViolations->TabIndex = 3;
 			   // 
 			   // btnClearViolations
 			   // 
@@ -782,13 +808,33 @@ namespace ConsoleApplication3 {
 			   this->btnClearViolations->UseVisualStyleBackColor = false;
 			   this->btnClearViolations->Click += gcnew System::EventHandler(this, &OfflineUploadForm::btnClearViolations_Click);
 			   // 
-			   // flpViolations
+			   // lblViolationCount
 			   // 
-			   this->flpViolations->AutoScroll = true;
-			   this->flpViolations->Location = System::Drawing::Point(3, 58);
-			   this->flpViolations->Name = L"flpViolations";
-			   this->flpViolations->Size = System::Drawing::Size(845, 162);
-			   this->flpViolations->TabIndex = 3;
+			   this->lblViolationCount->AutoSize = true;
+			   this->lblViolationCount->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10));
+			   this->lblViolationCount->Location = System::Drawing::Point(3, 30);
+			   this->lblViolationCount->Name = L"lblViolationCount";
+			   this->lblViolationCount->Size = System::Drawing::Size(117, 19);
+			   this->lblViolationCount->TabIndex = 1;
+			   this->lblViolationCount->Text = L"Total Violations: 0";
+			   // 
+			   // lblViolationTitle
+			   // 
+			   this->lblViolationTitle->AutoSize = true;
+			   this->lblViolationTitle->Font = (gcnew System::Drawing::Font(L"Segoe UI", 12));
+			   this->lblViolationTitle->Location = System::Drawing::Point(3, 5);
+			   this->lblViolationTitle->Name = L"lblViolationTitle";
+			   this->lblViolationTitle->Size = System::Drawing::Size(139, 21);
+			   this->lblViolationTitle->TabIndex = 0;
+			   this->lblViolationTitle->Text = L"Violation Alerts (0)";
+			   // 
+			   // panel1
+			   // 
+			   this->panel1->BackColor = System::Drawing::Color::LightSteelBlue;
+			   this->panel1->Location = System::Drawing::Point(12, 12);
+			   this->panel1->Name = L"panel1";
+			   this->panel1->Size = System::Drawing::Size(851, 484);
+			   this->panel1->TabIndex = 4;
 			   // 
 			   // OfflineUploadForm
 			   // 
@@ -807,6 +853,8 @@ namespace ConsoleApplication3 {
 			   (cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->splitContainer1))->EndInit();
 			   this->splitContainer1->ResumeLayout(false);
 			   (cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->pictureBox1))->EndInit();
+			   this->pnlViolationContainer->ResumeLayout(false);
+			   this->pnlViolationContainer->PerformLayout();
 			   this->ResumeLayout(false);
 
 		   }
@@ -933,6 +981,42 @@ namespace ConsoleApplication3 {
 					CheckViolations(frameCopy);
 				}
 			}
+
+			// *** [NEW] SYNC TRACKBAR WITH CURRENT FRAME POSITION ***
+			if (!isTrackBarDragging && g_cap_offline && g_cap_offline->isOpened() && isProcessing) {
+				long long currentFrame = (long long)g_cap_offline->get(cv::CAP_PROP_POS_FRAMES);
+				if (currentFrame <= trackBar1->Maximum) {
+					trackBar1->Value = (int)currentFrame;
+				}
+			}
+
+			// *** [NEW] UPDATE PARKING STATISTICS LABELS ***
+			AppState state;
+			{
+				std::lock_guard<std::mutex> lock(g_stateMutex);
+				state = g_appState;
+			}
+
+			if (g_parkingEnabled_offline && !state.slotStatuses.empty()) {
+				int emptyCount = 0;
+				int occupiedCount = 0;
+
+				for (const auto& slotEntry : state.slotStatuses) {
+					SlotStatus status = slotEntry.second;
+					if (status == SlotStatus::EMPTY) {
+						emptyCount++;
+					}
+					else {
+						occupiedCount++;
+					}
+				}
+
+				int violationCount = state.violatingCarIds.size();
+
+				label5->Text = System::String::Format(L"Empty: {0}", emptyCount);
+				label6->Text = System::String::Format(L"Normal: {0}", occupiedCount);
+				label7->Text = System::String::Format(L"Violation: {0}", violationCount);
+			}
 		}
 		catch (...) {}
 	}
@@ -1010,6 +1094,7 @@ namespace ConsoleApplication3 {
 		if (ofd->ShowDialog() == System::Windows::Forms::DialogResult::OK) {
 			std::string fileName = msclr::interop::marshal_as<std::string>(ofd->FileName);
 			OpenCamera(fileName);
+			InitializeTrackBar();
 			if (g_cap_offline && g_cap_offline->isOpened()) StartProcessing();
 		}
 	}
@@ -1019,7 +1104,15 @@ namespace ConsoleApplication3 {
 	}
 
 	private: System::Void btnPlayPause_Click(System::Object^ sender, System::EventArgs^ e) {
-		if (isProcessing) StopProcessing(); else StartProcessing();
+		if (isProcessing) {
+			StopProcessing();
+			btnPlayPause->Text = L"▶";
+		}
+		else {
+			isPlayingVideo = true;
+			StartProcessing();
+			btnPlayPause->Text = L"⏸";
+		}
 	}
 
 	private: System::Void btnLoadParkingTemplate_Click(System::Object^ sender, System::EventArgs^ e) {
@@ -1179,6 +1272,39 @@ namespace ConsoleApplication3 {
 		violationsList->Clear();
 		violatingCarTimers->Clear();
 		RefreshViolationPanel();
+	}
+
+	// *** [NEW] TRACKBAR EVENT HANDLERS ***
+	private: System::Void trackBar1_MouseDown(System::Object^ sender, System::Windows::Forms::MouseEventArgs^ e) {
+		isTrackBarDragging = true;
+		StopProcessing();
+	}
+
+	private: System::Void trackBar1_MouseUp(System::Object^ sender, System::Windows::Forms::MouseEventArgs^ e) {
+		isTrackBarDragging = false;
+		if (g_cap_offline && g_cap_offline->isOpened()) {
+			long long framePos = trackBar1->Value;
+			g_cap_offline->set(cv::CAP_PROP_POS_FRAMES, framePos);
+			StartProcessing();
+		}
+	}
+
+	private: System::Void trackBar1_Scroll(System::Object^ sender, System::EventArgs^ e) {
+		if (isTrackBarDragging && g_cap_offline && g_cap_offline->isOpened()) {
+			long long framePos = trackBar1->Value;
+			g_cap_offline->set(cv::CAP_PROP_POS_FRAMES, framePos);
+		}
+	}
+
+	// *** INITIALIZE TRACKBAR AFTER VIDEO LOAD ***
+	private: void InitializeTrackBar() {
+		if (g_cap_offline && g_cap_offline->isOpened()) {
+			double frameCount = g_cap_offline->get(cv::CAP_PROP_FRAME_COUNT);
+			totalFrames = (long long)frameCount;
+			trackBar1->Minimum = 0;
+			trackBar1->Maximum = (int)((totalFrames > 0) ? totalFrames - 1 : 0);
+			trackBar1->Value = 0;
+		}
 	}
 };
 }
