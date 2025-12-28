@@ -423,6 +423,31 @@ static void DrawSceneOnline(const cv::Mat& frame, long long displaySeq, cv::Mat&
 	cv::putText(outResult, stats, cv::Point(10, 25), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
 }
 
+// *** [NEW] CREATE VIOLATION VISUALIZATION ***
+static cv::Mat CreateViolationVisualization(cv::Mat fullFrame, cv::Rect carBox) {
+	if (fullFrame.empty()) return cv::Mat();
+	
+	// 1. สำเนาของเฟรม
+	cv::Mat result = fullFrame.clone();
+	
+	// 2. ทำให้มืด 70% (เหลือ 30% ความสว่าง)
+	result = result * 0.3;
+	
+	// 3. ตัดเอาเฉพาะรถจากเฟรมสว่าง
+	cv::Rect safeBbox = carBox & cv::Rect(0, 0, fullFrame.cols, fullFrame.rows);
+	if (safeBbox.area() > 0) {
+		cv::Mat carROI = fullFrame(safeBbox).clone();
+		
+		// 4. วางรถสว่างกลับลงบนภาพมืด
+		carROI.copyTo(result(safeBbox));
+		
+		// 5. วาดกรอบสี่เหลี่ยมสว่าง (เหลือง)
+		cv::rectangle(result, safeBbox, cv::Scalar(0, 255, 255), 3);
+	}
+	
+	return result;
+}
+
 #pragma managed(pop)
 
 namespace ConsoleApplication3 {
