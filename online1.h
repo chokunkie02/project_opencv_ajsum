@@ -6,6 +6,7 @@
 #include <direct.h>  // For _getcwd
 #include "BYTETracker.h"
 #include "ParkingSlot.h"
+#include "ViolationDetailForm.h"
 
 #pragma managed(push, off)
 #define NOMINMAX
@@ -266,12 +267,12 @@ static void ProcessFrameOnline(const cv::Mat& inputFrame, long long frameSeq) {
 					float top = (y - 0.5 * h - dh) / ratio;
 					float width = w / ratio;
 					float height = h / ratio;
-					boxes.push_back(cv::Rect((int)left, (int)top, (int)width, (int)height));
+				 boxes.push_back(cv::Rect((int)left, (int)top, (int)width, (int)height));
 					confs.push_back((float)max_class_score);
 					class_ids.push_back(class_id.x);
 				}
 			}
-			data += dimensions;
+		 data += dimensions;
 		}
 
 		std::vector<int> nms;
@@ -469,6 +470,8 @@ namespace ConsoleApplication3 {
 			
 			isProcessing = false;
 			shouldStop = false;
+			violationsList_online = gcnew System::Collections::Generic::List<ViolationRecord_Online^>();
+			violatingCarTimers_online = gcnew System::Collections::Generic::Dictionary<int, System::DateTime>();
 
 			BackgroundWorker^ modelLoader = gcnew BackgroundWorker();
 			modelLoader->DoWork += gcnew DoWorkEventHandler(this, &UploadForm::LoadModel_DoWork);
@@ -491,7 +494,6 @@ namespace ConsoleApplication3 {
 	private: System::Windows::Forms::Timer^ timer1;
 	private: System::Windows::Forms::PictureBox^ pictureBox1;
 	private: BackgroundWorker^ processingWorker;
-		   // [READER THREAD] - เหมือนออฟไลน์
 	private: Thread^ readerThread;
 	private: System::ComponentModel::IContainer^ components;
 	private: Bitmap^ currentFrame;
@@ -521,6 +523,30 @@ namespace ConsoleApplication3 {
 	private: bool useBuffer1;
 	private: System::Windows::Forms::Label^ label1;
 
+	// *** [NEW] PARKING STATISTICS LABELS ***
+	private: System::Windows::Forms::Label^ label5_online;
+	private: System::Windows::Forms::Label^ label6_online;
+	private: System::Windows::Forms::Label^ label7_online;
+
+	// *** [NEW] VIOLATION ALERTS SYSTEM ***
+
+	private: ref struct ViolationRecord_Online {
+		int carId;
+		Bitmap^ screenshot;
+		Bitmap^ visualizationBitmap;
+		System::String^ violationType;
+		System::DateTime captureTime;
+		int durationSeconds;
+	};
+
+	private: System::Collections::Generic::List<ViolationRecord_Online^>^ violationsList_online;
+	private: System::Windows::Forms::Panel^ pnlViolationContainer_online;
+	private: System::Windows::Forms::FlowLayoutPanel^ flpViolations_online;
+	private: System::Windows::Forms::Label^ lblViolationTitle_online;
+	private: System::Windows::Forms::Label^ lblViolationCount_online;
+	private: System::Windows::Forms::Button^ btnClearViolations_online;
+	private: System::Collections::Generic::Dictionary<int, System::DateTime>^ violatingCarTimers_online;
+
 #pragma region Windows Form Designer generated code
 		   void InitializeComponent(void)
 		   {
@@ -535,13 +561,21 @@ namespace ConsoleApplication3 {
 			   this->trackBar1 = (gcnew System::Windows::Forms::TrackBar());
 			   this->lblCameraName = (gcnew System::Windows::Forms::Label());
 			   this->panel2 = (gcnew System::Windows::Forms::Panel());
+			   this->lblLogs = (gcnew System::Windows::Forms::Label());
 			   this->chkParkingMode = (gcnew System::Windows::Forms::CheckBox());
 			   this->btnLoadParkingTemplate = (gcnew System::Windows::Forms::Button());
-			   this->lblLogs = (gcnew System::Windows::Forms::Label());
 			   this->lblViolation = (gcnew System::Windows::Forms::Label());
 			   this->lblNormal = (gcnew System::Windows::Forms::Label());
 			   this->lblEmpty = (gcnew System::Windows::Forms::Label());
 			   this->btnLiveCamera = (gcnew System::Windows::Forms::Button());
+			   this->label5_online = (gcnew System::Windows::Forms::Label());
+			   this->label6_online = (gcnew System::Windows::Forms::Label());
+			   this->label7_online = (gcnew System::Windows::Forms::Label());
+			   this->pnlViolationContainer_online = (gcnew System::Windows::Forms::Panel());
+			   this->flpViolations_online = (gcnew System::Windows::Forms::FlowLayoutPanel());
+			   this->btnClearViolations_online = (gcnew System::Windows::Forms::Button());
+			   this->lblViolationCount_online = (gcnew System::Windows::Forms::Label());
+			   this->lblViolationTitle_online = (gcnew System::Windows::Forms::Label());
 			   this->splitContainer1 = (gcnew System::Windows::Forms::SplitContainer());
 			   this->label1 = (gcnew System::Windows::Forms::Label());
 			   (cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->pictureBox1))->BeginInit();
@@ -550,6 +584,7 @@ namespace ConsoleApplication3 {
 			   this->splitContainer1->Panel1->SuspendLayout();
 			   this->splitContainer1->Panel2->SuspendLayout();
 			   this->splitContainer1->SuspendLayout();
+			   this->pnlViolationContainer_online->SuspendLayout();
 			   this->SuspendLayout();
 			   // 
 			   // timer1
@@ -640,35 +675,6 @@ namespace ConsoleApplication3 {
 			   this->lblCameraName->TabIndex = 6;
 			   this->lblCameraName->Text = L"camera1";
 			   // 
-			   // panel2
-			   // 
-			   this->panel2->BackColor = System::Drawing::Color::LightSteelBlue;
-			   this->panel2->Location = System::Drawing::Point(869, 12);
-			   this->panel2->Name = L"panel2";
-			   this->panel2->Size = System::Drawing::Size(541, 484);
-			   this->panel2->TabIndex = 5;
-			   // 
-			   // chkParkingMode
-			   // 
-			   this->chkParkingMode->AutoSize = true;
-			   this->chkParkingMode->Location = System::Drawing::Point(14, 96);
-			   this->chkParkingMode->Name = L"chkParkingMode";
-			   this->chkParkingMode->Size = System::Drawing::Size(98, 17);
-			   this->chkParkingMode->TabIndex = 8;
-			   this->chkParkingMode->Text = L"Enable Parking";
-			   this->chkParkingMode->CheckedChanged += gcnew System::EventHandler(this, &UploadForm::chkParkingMode_CheckedChanged);
-			   // 
-			   // btnLoadParkingTemplate
-			   // 
-			   this->btnLoadParkingTemplate->BackColor = System::Drawing::Color::LightGreen;
-			   this->btnLoadParkingTemplate->Location = System::Drawing::Point(297, 88);
-			   this->btnLoadParkingTemplate->Name = L"btnLoadParkingTemplate";
-			   this->btnLoadParkingTemplate->Size = System::Drawing::Size(100, 25);
-			   this->btnLoadParkingTemplate->TabIndex = 7;
-			   this->btnLoadParkingTemplate->Text = L"Load Template";
-			   this->btnLoadParkingTemplate->UseVisualStyleBackColor = false;
-			   this->btnLoadParkingTemplate->Click += gcnew System::EventHandler(this, &UploadForm::btnLoadParkingTemplate_Click);
-			   // 
 			   // lblLogs
 			   // 
 			   this->lblLogs->AutoSize = true;
@@ -679,48 +685,28 @@ namespace ConsoleApplication3 {
 			   this->lblLogs->TabIndex = 0;
 			   this->lblLogs->Text = L"logs 25/12/67";
 			   // 
-			   // lblViolation
+			   // chkParkingMode
 			   // 
-			   this->lblViolation->AutoSize = true;
-			   this->lblViolation->BackColor = System::Drawing::Color::Red;
-			   this->lblViolation->Font = (gcnew System::Drawing::Font(L"Segoe UI", 16.25F, System::Drawing::FontStyle::Bold, System::Drawing::GraphicsUnit::Point,
-				   static_cast<System::Byte>(0)));
-			   this->lblViolation->ForeColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(45)), static_cast<System::Int32>(static_cast<System::Byte>(45)),
-				   static_cast<System::Int32>(static_cast<System::Byte>(48)));
-			   this->lblViolation->Location = System::Drawing::Point(282, 168);
-			   this->lblViolation->Name = L"lblViolation";
-			   this->lblViolation->Size = System::Drawing::Size(106, 30);
-			   this->lblViolation->TabIndex = 11;
-			   this->lblViolation->Text = L"Violation";
+			   this->chkParkingMode->AutoSize = true;
+			   this->chkParkingMode->Location = System::Drawing::Point(14, 30);
+			   this->chkParkingMode->Name = L"chkParkingMode";
+			   this->chkParkingMode->Size = System::Drawing::Size(98, 17);
+			   this->chkParkingMode->TabIndex = 8;
+			   this->chkParkingMode->Text = L"Enable Parking";
+			   this->chkParkingMode->CheckedChanged += gcnew System::EventHandler(this, &UploadForm::chkParkingMode_CheckedChanged);
 			   // 
-			   // lblNormal
+			   // btnLoadParkingTemplate
 			   // 
-			   this->lblNormal->AutoSize = true;
-			   this->lblNormal->BackColor = System::Drawing::Color::Yellow;
-			   this->lblNormal->Font = (gcnew System::Drawing::Font(L"Segoe UI", 16.25F, System::Drawing::FontStyle::Bold, System::Drawing::GraphicsUnit::Point,
-				   static_cast<System::Byte>(0)));
-			   this->lblNormal->ForeColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(45)), static_cast<System::Int32>(static_cast<System::Byte>(45)),
-				   static_cast<System::Int32>(static_cast<System::Byte>(48)));
-			   this->lblNormal->Location = System::Drawing::Point(157, 168);
-			   this->lblNormal->Name = L"lblNormal";
-			   this->lblNormal->Size = System::Drawing::Size(90, 30);
-			   this->lblNormal->TabIndex = 10;
-			   this->lblNormal->Text = L"Normal";
-			   // 
-			   // lblEmpty
-			   // 
-			   this->lblEmpty->AutoSize = true;
-			   this->lblEmpty->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(128)), static_cast<System::Int32>(static_cast<System::Byte>(255)),
-				   static_cast<System::Int32>(static_cast<System::Byte>(128)));
-			   this->lblEmpty->Font = (gcnew System::Drawing::Font(L"Segoe UI", 16.25F, System::Drawing::FontStyle::Bold, System::Drawing::GraphicsUnit::Point,
-				   static_cast<System::Byte>(0)));
-			   this->lblEmpty->ForeColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(45)), static_cast<System::Int32>(static_cast<System::Byte>(45)),
-				   static_cast<System::Int32>(static_cast<System::Byte>(48)));
-			   this->lblEmpty->Location = System::Drawing::Point(44, 168);
-			   this->lblEmpty->Name = L"lblEmpty";
-			   this->lblEmpty->Size = System::Drawing::Size(80, 30);
-			   this->lblEmpty->TabIndex = 9;
-			   this->lblEmpty->Text = L"Empty";
+			   this->btnLoadParkingTemplate->BackColor = System::Drawing::Color::LightGreen;
+			   this->btnLoadParkingTemplate->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 11.25F, System::Drawing::FontStyle::Bold,
+				   System::Drawing::GraphicsUnit::Point, static_cast<System::Byte>(0)));
+			   this->btnLoadParkingTemplate->Location = System::Drawing::Point(14, 56);
+			   this->btnLoadParkingTemplate->Name = L"btnLoadParkingTemplate";
+			   this->btnLoadParkingTemplate->Size = System::Drawing::Size(320, 34);
+			   this->btnLoadParkingTemplate->TabIndex = 7;
+			   this->btnLoadParkingTemplate->Text = L"Load Template";
+			   this->btnLoadParkingTemplate->UseVisualStyleBackColor = false;
+			   this->btnLoadParkingTemplate->Click += gcnew System::EventHandler(this, &UploadForm::btnLoadParkingTemplate_Click);
 			   // 
 			   // btnLiveCamera
 			   // 
@@ -728,13 +714,105 @@ namespace ConsoleApplication3 {
 			   this->btnLiveCamera->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 11.25F, System::Drawing::FontStyle::Bold, System::Drawing::GraphicsUnit::Point,
 				   static_cast<System::Byte>(0)));
 			   this->btnLiveCamera->ForeColor = System::Drawing::SystemColors::ButtonHighlight;
-			   this->btnLiveCamera->Location = System::Drawing::Point(14, 25);
+			   this->btnLiveCamera->Location = System::Drawing::Point(14, 99);
 			   this->btnLiveCamera->Name = L"btnLiveCamera";
-			   this->btnLiveCamera->Size = System::Drawing::Size(100, 56);
+			   this->btnLiveCamera->Size = System::Drawing::Size(320, 34);
 			   this->btnLiveCamera->TabIndex = 0;
 			   this->btnLiveCamera->Text = L"📹 Live Camera";
 			   this->btnLiveCamera->UseVisualStyleBackColor = false;
 			   this->btnLiveCamera->Click += gcnew System::EventHandler(this, &UploadForm::btnLiveCamera_Click);
+			   // 
+			   // label5_online (Empty)
+			   // 
+			   this->label5_online->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(76)), static_cast<System::Int32>(static_cast<System::Byte>(175)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(80)));
+			   this->label5_online->Font = (gcnew System::Drawing::Font(L"Arial", 26, System::Drawing::FontStyle::Bold));
+			   this->label5_online->ForeColor = System::Drawing::Color::White;
+			   this->label5_online->Location = System::Drawing::Point(14, 143);
+			   this->label5_online->Name = L"label5_online";
+			   this->label5_online->Size = System::Drawing::Size(320, 50);
+			   this->label5_online->TabIndex = 14;
+			   this->label5_online->Text = L"Empty: 0";
+			   this->label5_online->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			   // 
+			   // label6_online (Normal)
+			   // 
+			   this->label6_online->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(255)), static_cast<System::Int32>(static_cast<System::Byte>(193)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(7)));
+			   this->label6_online->Font = (gcnew System::Drawing::Font(L"Arial", 26, System::Drawing::FontStyle::Bold));
+			   this->label6_online->ForeColor = System::Drawing::Color::White;
+			   this->label6_online->Location = System::Drawing::Point(14, 201);
+			   this->label6_online->Name = L"label6_online";
+			   this->label6_online->Size = System::Drawing::Size(320, 50);
+			   this->label6_online->TabIndex = 15;
+			   this->label6_online->Text = L"Normal: 0";
+			   this->label6_online->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			   // 
+			   // label7_online (Violation)
+			   // 
+			   this->label7_online->BackColor = System::Drawing::Color::FromArgb(static_cast<System::Int32>(static_cast<System::Byte>(244)), static_cast<System::Int32>(static_cast<System::Byte>(67)),
+				   static_cast<System::Int32>(static_cast<System::Byte>(54)));
+			   this->label7_online->Font = (gcnew System::Drawing::Font(L"Arial", 26, System::Drawing::FontStyle::Bold));
+			   this->label7_online->ForeColor = System::Drawing::Color::White;
+			   this->label7_online->Location = System::Drawing::Point(14, 259);
+			   this->label7_online->Name = L"label7_online";
+			   this->label7_online->Size = System::Drawing::Size(320, 50);
+			   this->label7_online->TabIndex = 16;
+			   this->label7_online->Text = L"Violation: 0";
+			   this->label7_online->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			   // 
+			   // pnlViolationContainer_online
+			   // 
+			   this->pnlViolationContainer_online->BackColor = System::Drawing::Color::LightSteelBlue;
+			   this->pnlViolationContainer_online->Controls->Add(this->flpViolations_online);
+			   this->pnlViolationContainer_online->Controls->Add(this->btnClearViolations_online);
+			   this->pnlViolationContainer_online->Controls->Add(this->lblViolationCount_online);
+			   this->pnlViolationContainer_online->Controls->Add(this->lblViolationTitle_online);
+			   this->pnlViolationContainer_online->Location = System::Drawing::Point(14, 328);
+			   this->pnlViolationContainer_online->Name = L"pnlViolationContainer_online";
+			   this->pnlViolationContainer_online->Size = System::Drawing::Size(352, 225);
+			   this->pnlViolationContainer_online->TabIndex = 13;
+			   // 
+			   // flpViolations_online
+			   // 
+			   this->flpViolations_online->AutoScroll = true;
+			   this->flpViolations_online->Location = System::Drawing::Point(30, 52);
+			   this->flpViolations_online->Name = L"flpViolations_online";
+			   this->flpViolations_online->Size = System::Drawing::Size(286, 162);
+			   this->flpViolations_online->TabIndex = 3;
+			   // 
+			   // btnClearViolations_online
+			   // 
+			   this->btnClearViolations_online->BackColor = System::Drawing::Color::Tomato;
+			   this->btnClearViolations_online->FlatStyle = System::Windows::Forms::FlatStyle::Flat;
+			   this->btnClearViolations_online->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10));
+			   this->btnClearViolations_online->Location = System::Drawing::Point(270, 5);
+			   this->btnClearViolations_online->Name = L"btnClearViolations_online";
+			   this->btnClearViolations_online->Size = System::Drawing::Size(75, 27);
+			   this->btnClearViolations_online->TabIndex = 2;
+			   this->btnClearViolations_online->Text = L"Clear All";
+			   this->btnClearViolations_online->UseVisualStyleBackColor = false;
+			   this->btnClearViolations_online->Click += gcnew System::EventHandler(this, &UploadForm::btnClearViolations_online_Click);
+			   // 
+			   // lblViolationCount_online
+			   // 
+			   this->lblViolationCount_online->AutoSize = true;
+			   this->lblViolationCount_online->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10));
+			   this->lblViolationCount_online->Location = System::Drawing::Point(3, 30);
+			   this->lblViolationCount_online->Name = L"lblViolationCount_online";
+			   this->lblViolationCount_online->Size = System::Drawing::Size(117, 19);
+			   this->lblViolationCount_online->TabIndex = 1;
+			   this->lblViolationCount_online->Text = L"Violations: 0";
+			   // 
+			   // lblViolationTitle_online
+			   // 
+			   this->lblViolationTitle_online->AutoSize = true;
+			   this->lblViolationTitle_online->Font = (gcnew System::Drawing::Font(L"Segoe UI", 12));
+			   this->lblViolationTitle_online->Location = System::Drawing::Point(3, 5);
+			   this->lblViolationTitle_online->Name = L"lblViolationTitle_online";
+			   this->lblViolationTitle_online->Size = System::Drawing::Size(139, 21);
+			   this->lblViolationTitle_online->TabIndex = 0;
+			   this->lblViolationTitle_online->Text = L"Violation Alerts (0)";
 			   // 
 			   // splitContainer1
 			   // 
@@ -757,14 +835,16 @@ namespace ConsoleApplication3 {
 			   // splitContainer1.Panel2
 			   // 
 			   this->splitContainer1->Panel2->BackColor = System::Drawing::Color::LightSteelBlue;
-			   this->splitContainer1->Panel2->Controls->Add(this->lblViolation);
-			   this->splitContainer1->Panel2->Controls->Add(this->lblNormal);
-			   this->splitContainer1->Panel2->Controls->Add(this->lblEmpty);
+			   this->splitContainer1->Panel2->Padding = System::Windows::Forms::Padding(14);
+			   this->splitContainer1->Panel2->Controls->Add(this->pnlViolationContainer_online);
+			   this->splitContainer1->Panel2->Controls->Add(this->label7_online);
+			   this->splitContainer1->Panel2->Controls->Add(this->label6_online);
+			   this->splitContainer1->Panel2->Controls->Add(this->label5_online);
+			   this->splitContainer1->Panel2->Controls->Add(this->btnLiveCamera);
 			   this->splitContainer1->Panel2->Controls->Add(this->btnLoadParkingTemplate);
 			   this->splitContainer1->Panel2->Controls->Add(this->chkParkingMode);
-			   this->splitContainer1->Panel2->Controls->Add(this->btnLiveCamera);
 			   this->splitContainer1->Panel2->Controls->Add(this->lblLogs);
-			   this->splitContainer1->Size = System::Drawing::Size(1443, 759);
+			   this->splitContainer1->Panel2->Size = System::Drawing::Size(1443, 759);
 			   this->splitContainer1->SplitterDistance = 1009;
 			   this->splitContainer1->TabIndex = 5;
 			   // 
@@ -799,8 +879,13 @@ namespace ConsoleApplication3 {
 			   this->splitContainer1->Panel2->PerformLayout();
 			   (cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->splitContainer1))->EndInit();
 			   this->splitContainer1->ResumeLayout(false);
+			   this->pnlViolationContainer_online->ResumeLayout(false);
+			   this->pnlViolationContainer_online->PerformLayout();
 			   this->ResumeLayout(false);
 
+			   // บังคับให้สร้าง labelLogs ขึ้นมาเพื่อไม่ให้แสดงผลผิดพลาด
+			   this->lblLogs->BringToFront();
+			   this->lblLogs->SendToBack();
 		   }
 #pragma endregion
 
@@ -856,6 +941,39 @@ namespace ConsoleApplication3 {
 
 			if (!finalFrame.empty()) {
 				UpdatePictureBox(finalFrame);
+				// Check for violations
+				if (g_parkingEnabled_online) {
+					cv::Mat frameCopy = finalFrame.clone();
+					CheckViolations_Online(frameCopy);
+				}
+			}
+
+			// *** [NEW] UPDATE PARKING STATISTICS LABELS ***
+			OnlineAppState state;
+			{
+				std::lock_guard<std::mutex> lock(g_onlineStateMutex);
+				state = g_onlineState;
+			}
+
+			if (g_parkingEnabled_online && !state.slotStatuses.empty()) {
+				int emptyCount = 0;
+				int occupiedCount = 0;
+
+				for (const auto& slotEntry : state.slotStatuses) {
+					SlotStatus status = slotEntry.second;
+					if (status == SlotStatus::EMPTY) {
+						emptyCount++;
+					}
+					else {
+						occupiedCount++;
+					}
+				}
+
+				int violationCount = state.violatingCarIds.size();
+
+				label5_online->Text = System::String::Format(L"Empty: {0}", emptyCount);
+				label6_online->Text = System::String::Format(L"Normal: {0}", occupiedCount);
+				label7_online->Text = System::String::Format(L"Violation: {0}", violationCount);
 			}
 		}
 		catch (...) {}
@@ -900,6 +1018,8 @@ namespace ConsoleApplication3 {
 			g_onlineState = OnlineAppState();
 		}
 		ResetParkingCache_Online();
+		violationsList_online->Clear();
+		violatingCarTimers_online->Clear();
 
 		if (!processingWorker->IsBusy) processingWorker->RunWorkerAsync();
 
@@ -964,269 +1084,434 @@ namespace ConsoleApplication3 {
 		}
 	}
 
-	private: System::Void processingWorker_DoWork(System::Object^ sender, DoWorkEventArgs^ e) {
-		BackgroundWorker^ worker = safe_cast<BackgroundWorker^>(sender);
-		lastProcessedSeq = -1;
-		while (!shouldStop && !worker->CancellationPending) {
-			try {
-				cv::Mat frameToProcess;
-				long long seq = 0;
-				GetRawFrameOnline(frameToProcess, seq);
+private: System::Void processingWorker_DoWork(System::Object^ sender, DoWorkEventArgs^ e) {
+	BackgroundWorker^ worker = safe_cast<BackgroundWorker^>(sender);
+	lastProcessedSeq = -1;
+	while (!shouldStop && !worker->CancellationPending) {
+		try {
+			cv::Mat frameToProcess;
+			long long seq = 0;
+			GetRawFrameOnline(frameToProcess, seq);
 
-				if (!frameToProcess.empty() && seq > lastProcessedSeq) {
-					ProcessFrameOnline(frameToProcess, seq);
-					lastProcessedSeq = seq;
-				}
-				else {
-					Threading::Thread::Sleep(10);
-				}
+			if (!frameToProcess.empty() && seq > lastProcessedSeq) {
+				ProcessFrameOnline(frameToProcess, seq);
+				lastProcessedSeq = seq;
 			}
-			catch (...) { Threading::Thread::Sleep(50); }
+			else {
+				Threading::Thread::Sleep(10);
+			}
 		}
+		catch (...) { Threading::Thread::Sleep(50); }
 	}
+}
 
-	private: System::Void btnLiveCamera_Click(System::Object^ sender, System::EventArgs^ e) {
-		StopProcessing();
-		
-		Form^ ipForm = gcnew Form();
-		ipForm->Text = L"Connect to Mobile Camera";
-		ipForm->Size = System::Drawing::Size(450, 320);
-		ipForm->StartPosition = FormStartPosition::CenterParent;
-		ipForm->FormBorderStyle = System::Windows::Forms::FormBorderStyle::FixedDialog;
-		ipForm->MaximizeBox = false;
-		ipForm->MinimizeBox = false;
+private: System::Void btnLiveCamera_Click(System::Object^ sender, System::EventArgs^ e) {
+	StopProcessing();
+	
+	Form^ ipForm = gcnew Form();
+	ipForm->Text = L"Connect to Mobile Camera";
+	ipForm->Size = System::Drawing::Size(450, 320);
+	ipForm->StartPosition = FormStartPosition::CenterParent;
+	ipForm->FormBorderStyle = System::Windows::Forms::FormBorderStyle::FixedDialog;
+	ipForm->MaximizeBox = false;
+	ipForm->MinimizeBox = false;
 
-		Label^ labelTitle = gcnew Label();
-		labelTitle->Text = L"Enter Mobile Phone IP Address and Port";
-		labelTitle->Location = System::Drawing::Point(20, 20);
-		labelTitle->Size = System::Drawing::Size(400, 25);
-		labelTitle->Font = gcnew System::Drawing::Font(L"Segoe UI", 10, FontStyle::Bold);
+	Label^ labelTitle = gcnew Label();
+	labelTitle->Text = L"Enter Mobile Phone IP Address and Port";
+	labelTitle->Location = System::Drawing::Point(20, 20);
+	labelTitle->Size = System::Drawing::Size(400, 25);
+	labelTitle->Font = gcnew System::Drawing::Font(L"Segoe UI", 10, FontStyle::Bold);
 
-		Label^ labelIP = gcnew Label();
-		labelIP->Text = L"IP Address:";
-		labelIP->Location = System::Drawing::Point(20, 60);
-		labelIP->Size = System::Drawing::Size(100, 20);
+	Label^ labelIP = gcnew Label();
+	labelIP->Text = L"IP Address:";
+	labelIP->Location = System::Drawing::Point(20, 60);
+	labelIP->Size = System::Drawing::Size(100, 20);
 
-		TextBox^ textBoxIP = gcnew TextBox();
-		textBoxIP->Location = System::Drawing::Point(120, 58);
-		textBoxIP->Size = System::Drawing::Size(290, 25);
-		textBoxIP->Text = L"192.168.1.100";
+	TextBox^ textBoxIP = gcnew TextBox();
+	textBoxIP->Location = System::Drawing::Point(120, 58);
+	textBoxIP->Size = System::Drawing::Size(290, 25);
+	textBoxIP->Text = L"192.168.1.100";
 
-		Label^ labelPort = gcnew Label();
-		labelPort->Text = L"Port:";
-		labelPort->Location = System::Drawing::Point(20, 95);
-		labelPort->Size = System::Drawing::Size(100, 20);
+	Label^ labelPort = gcnew Label();
+	labelPort->Text = L"Port:";
+	labelPort->Location = System::Drawing::Point(20, 95);
+	labelPort->Size = System::Drawing::Size(100, 20);
 
-		TextBox^ textBoxPort = gcnew TextBox();
-		textBoxPort->Location = System::Drawing::Point(120, 93);
-		textBoxPort->Size = System::Drawing::Size(290, 25);
-		textBoxPort->Text = L"8080";
+	TextBox^ textBoxPort = gcnew TextBox();
+	textBoxPort->Location = System::Drawing::Point(120, 93);
+	textBoxPort->Size = System::Drawing::Size(290, 25);
+	textBoxPort->Text = L"8080";
 
-		Label^ labelPath = gcnew Label();
-		labelPath->Text = L"Path:";
-		labelPath->Location = System::Drawing::Point(20, 130);
-		labelPath->Size = System::Drawing::Size(100, 20);
+	Label^ labelPath = gcnew Label();
+	labelPath->Text = L"Path:";
+	labelPath->Location = System::Drawing::Point(20, 130);
+	labelPath->Size = System::Drawing::Size(100, 20);
 
-		TextBox^ textBoxPath = gcnew TextBox();
-		textBoxPath->Location = System::Drawing::Point(120, 128);
-		textBoxPath->Size = System::Drawing::Size(290, 25);
-		textBoxPath->Text = L"/video";
+	TextBox^ textBoxPath = gcnew TextBox();
+	textBoxPath->Location = System::Drawing::Point(120, 128);
+	textBoxPath->Size = System::Drawing::Size(290, 25);
+	textBoxPath->Text = L"/video";
 
-		Label^ labelExample = gcnew Label();
-		labelExample->Text = L"Example apps: IP Webcam, DroidCam, or iVCam\nMake sure both devices are on the same WiFi network";
-		labelExample->Location = System::Drawing::Point(20, 165);
-		labelExample->Size = System::Drawing::Size(400, 35);
-		labelExample->Font = gcnew System::Drawing::Font(L"Segoe UI", 8, FontStyle::Italic);
-		labelExample->ForeColor = System::Drawing::Color::Gray;
+	Label^ labelExample = gcnew Label();
+	labelExample->Text = L"Example apps: IP Webcam, DroidCam, or iVCam\nMake sure both devices are on the same WiFi network";
+	labelExample->Location = System::Drawing::Point(20, 165);
+	labelExample->Size = System::Drawing::Size(400, 35);
+	labelExample->Font = gcnew System::Drawing::Font(L"Segoe UI", 8, FontStyle::Italic);
+	labelExample->ForeColor = System::Drawing::Color::Gray;
 
-		Button^ btnConnect = gcnew Button();
-		btnConnect->Text = L"Connect";
-		btnConnect->Location = System::Drawing::Point(120, 215);
-		btnConnect->Size = System::Drawing::Size(100, 35);
-		btnConnect->BackColor = System::Drawing::Color::FromArgb(40, 167, 69);
-		btnConnect->ForeColor = System::Drawing::Color::White;
-		btnConnect->FlatStyle = FlatStyle::Flat;
-		btnConnect->DialogResult = System::Windows::Forms::DialogResult::OK;
+	Button^ btnConnect = gcnew Button();
+	btnConnect->Text = L"Connect";
+	btnConnect->Location = System::Drawing::Point(120, 215);
+	btnConnect->Size = System::Drawing::Size(100, 35);
+	btnConnect->BackColor = System::Drawing::Color::FromArgb(40, 167, 69);
+	btnConnect->ForeColor = System::Drawing::Color::White;
+	btnConnect->FlatStyle = FlatStyle::Flat;
+	btnConnect->DialogResult = System::Windows::Forms::DialogResult::OK;
 
-		Button^ btnCancel = gcnew Button();
-		btnCancel->Text = L"Cancel";
-		btnCancel->Location = System::Drawing::Point(230, 215);
-		btnCancel->Size = System::Drawing::Size(100, 35);
-		btnCancel->BackColor = System::Drawing::Color::FromArgb(220, 53, 69);
-		btnCancel->ForeColor = System::Drawing::Color::White;
-		btnCancel->FlatStyle = FlatStyle::Flat;
-		btnCancel->DialogResult = System::Windows::Forms::DialogResult::Cancel;
+	Button^ btnCancel = gcnew Button();
+	btnCancel->Text = L"Cancel";
+	btnCancel->Location = System::Drawing::Point(230, 215);
+	btnCancel->Size = System::Drawing::Size(100, 35);
+	btnCancel->BackColor = System::Drawing::Color::FromArgb(220, 53, 69);
+	btnCancel->ForeColor = System::Drawing::Color::White;
+	btnCancel->FlatStyle = FlatStyle::Flat;
+	btnCancel->DialogResult = System::Windows::Forms::DialogResult::Cancel;
 
-		ipForm->Controls->Add(labelTitle);
-		ipForm->Controls->Add(labelIP);
-		ipForm->Controls->Add(textBoxIP);
-		ipForm->Controls->Add(labelPort);
-		ipForm->Controls->Add(textBoxPort);
-		ipForm->Controls->Add(labelPath);
-		ipForm->Controls->Add(textBoxPath);
-		ipForm->Controls->Add(labelExample);
-		ipForm->Controls->Add(btnConnect);
-		ipForm->Controls->Add(btnCancel);
-		ipForm->AcceptButton = btnConnect;
-		ipForm->CancelButton = btnCancel;
+	ipForm->Controls->Add(labelTitle);
+	ipForm->Controls->Add(labelIP);
+	ipForm->Controls->Add(textBoxIP);
+	ipForm->Controls->Add(labelPort);
+	ipForm->Controls->Add(textBoxPort);
+	ipForm->Controls->Add(labelPath);
+	ipForm->Controls->Add(textBoxPath);
+	ipForm->Controls->Add(labelExample);
+	ipForm->Controls->Add(btnConnect);
+	ipForm->Controls->Add(btnCancel);
+	ipForm->AcceptButton = btnConnect;
+	ipForm->CancelButton = btnCancel;
 
-		if (ipForm->ShowDialog() == System::Windows::Forms::DialogResult::OK) {
-			String^ ip = textBoxIP->Text->Trim();
-			String^ port = textBoxPort->Text->Trim();
-			String^ path = textBoxPath->Text->Trim();
+	if (ipForm->ShowDialog() == System::Windows::Forms::DialogResult::OK) {
+		String^ ip = textBoxIP->Text->Trim();
+		String^ port = textBoxPort->Text->Trim();
+		String^ path = textBoxPath->Text->Trim();
 
-			if (String::IsNullOrEmpty(ip) || String::IsNullOrEmpty(port)) {
-				MessageBox::Show(
-					"Please enter both IP Address and Port",
-					"Input Required",
-					MessageBoxButtons::OK,
-					MessageBoxIcon::Warning
-				);
-				return;
-			}
+		if (String::IsNullOrEmpty(ip) || String::IsNullOrEmpty(port)) {
+			MessageBox::Show(
+				"Please enter both IP Address and Port",
+				"Input Required",
+				MessageBoxButtons::OK,
+				MessageBoxIcon::Warning
+			);
+			return;
+		}
 
-			if (!path->StartsWith("/")) {
-				path = "/" + path;
-			}
+		if (!path->StartsWith("/")) {
+			path = "/" + path;
+		}
 
-			try {
-				array<String^>^ urlFormats = gcnew array<String^> {
-					String::Format("http://{0}:{1}{2}", ip, port, path),
-					String::Format("http://{0}:{1}/videofeed", ip, port),
-					String::Format("http://{0}:{1}/video", ip, port),
-					String::Format("rtsp://{0}:{1}", ip, port)
-				};
+		try {
+			array<String^>^ urlFormats = gcnew array<String^> {
+				String::Format("http://{0}:{1}{2}", ip, port, path),
+				String::Format("http://{0}:{1}/videofeed", ip, port),
+				String::Format("http://{0}:{1}/video", ip, port),
+				String::Format("rtsp://{0}:{1}", ip, port)
+			};
 
-				this->Text = L"Online Mode - Connecting to camera...";
-				Application::DoEvents();
+			this->Text = L"Online Mode - Connecting to camera...";
+			Application::DoEvents();
 
-				bool connected = false;
-				String^ successUrl = "";
+			bool connected = false;
+			String^ successUrl = "";
 
-				for each (String^ streamUrl in urlFormats) {
-					std::string url = msclr::interop::marshal_as<std::string>(streamUrl);
-					
-					OutputDebugStringA(("[INFO] Trying to connect: " + url + "\n").c_str());
-					
-					OpenGlobalCameraFromIP(url);
-					Threading::Thread::Sleep(1000);
+			for each (String^ streamUrl in urlFormats) {
+				std::string url = msclr::interop::marshal_as<std::string>(streamUrl);
+				
+				OutputDebugStringA(("[INFO] Trying to connect: " + url + "\n").c_str());
+				
+				OpenGlobalCameraFromIP(url);
+				Threading::Thread::Sleep(1000);
 
-					if (g_cap && g_cap->isOpened()) {
-						cv::Mat testFrame;
-						bool canRead = false;
-						{
-							std::lock_guard<std::mutex> lock(g_frameMutex);
-							if (g_cap->read(testFrame)) {
-								canRead = !testFrame.empty();
-							}
-						}
-
-						if (canRead) {
-							connected = true;
-							successUrl = streamUrl;
-							OutputDebugStringA("[SUCCESS] Connected successfully!\n");
-							break;
-						}
-					}
-					
+				if (g_cap && g_cap->isOpened()) {
+					cv::Mat testFrame;
+					bool canRead = false;
 					{
 						std::lock_guard<std::mutex> lock(g_frameMutex);
-						if (g_cap) {
-							delete g_cap;
-							g_cap = nullptr;
+						if (g_cap->read(testFrame)) {
+							canRead = !testFrame.empty();
 						}
 					}
-				}
 
-				if (connected) {
-					StartProcessing();
-					this->Text = L"Online Mode - Live Camera Connected";
-					MessageBox::Show(
-						"Successfully connected to mobile camera!\n\n" +
-						"Stream URL: " + successUrl + "\n\n" +
-						"Press OK to start detection.",
-						"Connection Successful",
-						MessageBoxButtons::OK,
-						MessageBoxIcon::Information
-					);
-				}
-				else {
-					this->Text = L"Online Mode - Connection Failed";
-					
-					String^ errorMsg = "Failed to connect to mobile camera!\n\n";
-					errorMsg += "Troubleshooting Steps:\n";
-					errorMsg += "1. Verify IP Address: " + ip + "\n";
-					errorMsg += "2. Verify Port: " + port + "\n";
-					errorMsg += "3. Check if camera app is running on mobile\n";
-					errorMsg += "4. Ensure both devices are on the same WiFi network\n";
-					errorMsg += "5. Check firewall settings\n";
-					errorMsg += "6. Try disabling antivirus temporarily\n\n";
-					errorMsg += "Attempted URLs:\n";
-					for each (String^ url in urlFormats) {
-						errorMsg += "  - " + url + "\n";
+					if (canRead) {
+						connected = true;
+						successUrl = streamUrl;
+						OutputDebugStringA("[SUCCESS] Connected successfully!\n");
+						break;
 					}
-					
-					MessageBox::Show(
-						errorMsg,
-						"Connection Error",
-						MessageBoxButtons::OK,
-						MessageBoxIcon::Error
-					);
+				}
+				
+				{
+					std::lock_guard<std::mutex> lock(g_frameMutex);
+					if (g_cap) {
+						delete g_cap;
+						g_cap = nullptr;
+					}
 				}
 			}
-			catch (Exception^ ex) {
-				this->Text = L"Online Mode - Error Occurred";
+
+			if (connected) {
+				StartProcessing();
+				this->Text = L"Online Mode - Live Camera Connected";
 				MessageBox::Show(
-					"An error occurred while connecting:\n\n" + 
-					ex->Message + "\n\n" +
-					"Stack Trace:\n" + ex->StackTrace,
-					"Exception Error",
+					"Successfully connected to mobile camera!\n\n" +
+					"Stream URL: " + successUrl + "\n\n" +
+					"Press OK to start detection.",
+					"Connection Successful",
+					MessageBoxButtons::OK,
+					MessageBoxIcon::Information
+				);
+			}
+			else {
+				this->Text = L"Online Mode - Connection Failed";
+				
+				String^ errorMsg = "Failed to connect to mobile camera!\n\n";
+				errorMsg += "Troubleshooting Steps:\n";
+				errorMsg += "1. Verify IP Address: " + ip + "\n";
+				errorMsg += "2. Verify Port: " + port + "\n";
+				errorMsg += "3. Check if camera app is running on mobile\n";
+				errorMsg += "4. Ensure both devices are on the same WiFi network\n";
+				errorMsg += "5. Check firewall settings\n";
+				errorMsg += "6. Try disabling antivirus temporarily\n\n";
+				errorMsg += "Attempted URLs:\n";
+				for each (String^ url in urlFormats) {
+					errorMsg += "  - " + url + "\n";
+				}
+				
+				MessageBox::Show(
+					errorMsg,
+					"Connection Error",
 					MessageBoxButtons::OK,
 					MessageBoxIcon::Error
 				);
 			}
 		}
-	}
-
-	private: System::Void btnLoadParkingTemplate_Click(System::Object^ sender, System::EventArgs^ e) {
-		OpenFileDialog^ ofd = gcnew OpenFileDialog();
-		ofd->Filter = "Parking Template|*.xml";
-		
-		char buffer[MAX_PATH];
-		_getcwd(buffer, MAX_PATH);
-		std::string currentDir(buffer);
-		std::string folder = currentDir + "\\parking_templates";
-		
-		ofd->InitialDirectory = gcnew String(folder.c_str());
-		ofd->Title = "Load Parking Template";
-	
-		if (ofd->ShowDialog() == System::Windows::Forms::DialogResult::OK) {
-			std::string fileName = msclr::interop::marshal_as<std::string>(ofd->FileName);
-			if (LoadParkingTemplate_Online(fileName)) {
-				chkParkingMode->Checked = true;
-				MessageBox::Show("Template loaded!\n\nParking slot detection is now active.\nViolations (cars parked outside slots) will be marked in RED.", 
-					"Success", MessageBoxButtons::OK, MessageBoxIcon::Information);
-			}
-			else {
-				MessageBox::Show("Failed to load template!", "Error", MessageBoxButtons::OK, MessageBoxIcon::Error);
-			}
+		catch (Exception^ ex) {
+			this->Text = L"Online Mode - Error Occurred";
+			MessageBox::Show(
+				"An error occurred while connecting:\n\n" + 
+				ex->Message + "\n\n" +
+				"Stack Trace:\n" + ex->StackTrace,
+				"Exception Error",
+				MessageBoxButtons::OK,
+				MessageBoxIcon::Error
+			);
 		}
 	}
+}
 
-	private: System::Void chkParkingMode_CheckedChanged(System::Object^ sender, System::EventArgs^ e) {
-		g_parkingEnabled_online = chkParkingMode->Checked;
-		if (chkParkingMode->Checked) {
-			label1->Text = L"Parking Mode ON";
-			label1->BackColor = System::Drawing::Color::LightGreen;
+private: System::Void btnLoadParkingTemplate_Click(System::Object^ sender, System::EventArgs^ e) {
+	OpenFileDialog^ ofd = gcnew OpenFileDialog();
+	ofd->Filter = "Parking Template|*.xml";
+	
+	char buffer[MAX_PATH];
+	_getcwd(buffer, MAX_PATH);
+	std::string currentDir(buffer);
+	std::string folder = currentDir + "\\parking_templates";
+	
+	ofd->InitialDirectory = gcnew String(folder.c_str());
+	ofd->Title = "Load Parking Template";
+	
+	if (ofd->ShowDialog() == System::Windows::Forms::DialogResult::OK) {
+		std::string fileName = msclr::interop::marshal_as<std::string>(ofd->FileName);
+		if (LoadParkingTemplate_Online(fileName)) {
+			chkParkingMode->Checked = true;
+			MessageBox::Show("Template loaded!\n\nParking slot detection is now active.\nViolations (cars parked outside slots) will be marked in RED.", 
+				"Success", MessageBoxButtons::OK, MessageBoxIcon::Information);
 		}
 		else {
-			label1->Text = L"Camera 1";
-			label1->BackColor = System::Drawing::Color::Yellow;
+			MessageBox::Show("Failed to load template!", "Error", MessageBoxButtons::OK, MessageBoxIcon::Error);
+		}
+	}
+}
+
+private: System::Void chkParkingMode_CheckedChanged(System::Object^ sender, System::EventArgs^ e) {
+	g_parkingEnabled_online = chkParkingMode->Checked;
+	if (chkParkingMode->Checked) {
+		label1->Text = L"Parking Mode ON";
+		label1->BackColor = System::Drawing::Color::LightGreen;
+	}
+	else {
+		label1->Text = L"Camera 1";
+		label1->BackColor = System::Drawing::Color::Yellow;
+	}
+}
+
+private: System::Void UploadForm_FormClosing(System::Object^ sender, FormClosingEventArgs^ e) {
+	StopProcessing();
+}
+
+	// *** [NEW] VIOLATION ALERTS METHODS ***
+
+	private: void AddViolationRecord_Online(int carId, cv::Mat& frameCapture, System::String^ violationType, 
+									 cv::Mat fullFrame, cv::Rect carBox) {
+		if (frameCapture.empty()) return;
+
+		Bitmap^ screenshot = gcnew Bitmap(frameCapture.cols, frameCapture.rows, System::Drawing::Imaging::PixelFormat::Format24bppRgb);
+		System::Drawing::Rectangle rect(0, 0, frameCapture.cols, frameCapture.rows);
+		System::Drawing::Imaging::BitmapData^ bmpData = screenshot->LockBits(rect, System::Drawing::Imaging::ImageLockMode::WriteOnly, screenshot->PixelFormat);
+
+		for (int y = 0; y < frameCapture.rows; y++) {
+			memcpy((unsigned char*)bmpData->Scan0.ToPointer() + y * bmpData->Stride, frameCapture.data + y * frameCapture.step, frameCapture.cols * 3);
+		}
+		screenshot->UnlockBits(bmpData);
+
+		cv::Mat visualizationMat = CreateViolationVisualization(fullFrame, carBox);
+		Bitmap^ visualizationBitmap = nullptr;
+		if (!visualizationMat.empty()) {
+			visualizationBitmap = gcnew Bitmap(visualizationMat.cols, visualizationMat.rows, System::Drawing::Imaging::PixelFormat::Format24bppRgb);
+			System::Drawing::Rectangle visRect(0, 0, visualizationMat.cols, visualizationMat.rows);
+			System::Drawing::Imaging::BitmapData^ visBmpData = visualizationBitmap->LockBits(visRect, System::Drawing::Imaging::ImageLockMode::WriteOnly, visualizationBitmap->PixelFormat);
+
+			for (int y = 0; y < visualizationMat.rows; y++) {
+				memcpy((unsigned char*)visBmpData->Scan0.ToPointer() + y * visBmpData->Stride, visualizationMat.data + y * visualizationMat.step, visualizationMat.cols * 3);
+			}
+			visualizationBitmap->UnlockBits(visBmpData);
+		}
+
+		ViolationRecord_Online^ record = gcnew ViolationRecord_Online();
+		record->carId = carId;
+		record->screenshot = screenshot;
+		record->visualizationBitmap = visualizationBitmap;
+		record->violationType = violationType;
+		record->captureTime = System::DateTime::Now;
+		record->durationSeconds = 0;
+
+		violationsList_online->Add(record);
+		RefreshViolationPanel_Online();
+	}
+
+	private: void RefreshViolationPanel_Online() {
+		if (!flpViolations_online) return;
+
+		flpViolations_online->Controls->Clear();
+
+		for each(ViolationRecord_Online^ record in violationsList_online) {
+			Panel^ itemPanel = gcnew Panel();
+			itemPanel->BackColor = System::Drawing::Color::White;
+			itemPanel->Size = System::Drawing::Size(250, 180);
+			itemPanel->BorderStyle = System::Windows::Forms::BorderStyle::FixedSingle;
+			itemPanel->Margin = System::Windows::Forms::Padding(5);
+			itemPanel->Cursor = System::Windows::Forms::Cursors::Hand;
+			
+			itemPanel->Tag = record;
+			itemPanel->Click += gcnew System::EventHandler(this, &UploadForm::OnViolationItemClick_Online);
+
+			PictureBox^ pbScreenshot = gcnew PictureBox();
+			pbScreenshot->Image = record->screenshot;
+			pbScreenshot->SizeMode = System::Windows::Forms::PictureBoxSizeMode::Zoom;
+			pbScreenshot->Location = System::Drawing::Point(5, 5);
+			pbScreenshot->Size = System::Drawing::Size(240, 100);
+			pbScreenshot->Cursor = System::Windows::Forms::Cursors::Hand;
+			pbScreenshot->Click += gcnew System::EventHandler(this, &UploadForm::OnViolationItemClick_Online);
+			itemPanel->Controls->Add(pbScreenshot);
+
+			Label^ lblInfo = gcnew Label();
+			lblInfo->Font = gcnew System::Drawing::Font(L"Segoe UI", 8);
+			lblInfo->Location = System::Drawing::Point(5, 110);
+			lblInfo->Size = System::Drawing::Size(240, 65);
+			lblInfo->Text = System::String::Format(L"ID: {0}\nType: {1}\nTime: {2:HH:mm:ss}\nDuration: {3}s",
+				record->carId, record->violationType, record->captureTime, record->durationSeconds);
+			lblInfo->Cursor = System::Windows::Forms::Cursors::Hand;
+			lblInfo->Click += gcnew System::EventHandler(this, &UploadForm::OnViolationItemClick_Online);
+			itemPanel->Controls->Add(lblInfo);
+
+			flpViolations_online->Controls->Add(itemPanel);
+		}
+
+		lblViolationCount_online->Text = System::String::Format(L"Violations: {0}", violationsList_online->Count);
+	}
+	
+	private: System::Void OnViolationItemClick_Online(System::Object^ sender, System::EventArgs^ e) {
+		Control^ clickedControl = safe_cast<Control^>(sender);
+		Panel^ itemPanel = nullptr;
+		
+		if (clickedControl->GetType() == Panel::typeid) {
+			itemPanel = safe_cast<Panel^>(clickedControl);
+		}
+		else {
+			itemPanel = safe_cast<Panel^>(clickedControl->Parent);
+		}
+		
+		if (itemPanel && itemPanel->Tag != nullptr) {
+			ViolationRecord_Online^ record = safe_cast<ViolationRecord_Online^>(itemPanel->Tag);
+			
+			ViolationDetailForm^ detailForm = gcnew ViolationDetailForm(
+				record->carId,
+				record->screenshot,
+				record->visualizationBitmap,
+				record->violationType,
+				record->captureTime,
+				record->durationSeconds
+			);
+			detailForm->ShowDialog(this);
 		}
 	}
 
-	private: System::Void UploadForm_FormClosing(System::Object^ sender, FormClosingEventArgs^ e) {
-		StopProcessing();
+	private: void CheckViolations_Online(cv::Mat& currentFrame) {
+		OnlineAppState state;
+		{
+			std::lock_guard<std::mutex> lock(g_onlineStateMutex);
+			state = g_onlineState;
+		}
+
+		for each(auto car in state.cars) {
+			if (car.framesStill > 300) {
+				if (!violatingCarTimers_online->ContainsKey(car.id)) {
+					violatingCarTimers_online->Add(car.id, System::DateTime::Now);
+					
+					cv::Rect safeBbox = car.bbox & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
+					if (safeBbox.area() > 0) {
+						cv::Mat croppedFrame = currentFrame(safeBbox).clone();
+						AddViolationRecord_Online(car.id, croppedFrame, L"Overstay", currentFrame, car.bbox);
+					}
+				}
+			}
+		}
+
+		for each(int violatingId in state.violatingCarIds) {
+			bool already_captured = false;
+			for each(ViolationRecord_Online^ record in violationsList_online) {
+				if (record->carId == violatingId && record->violationType == L"Wrong Slot") {
+					already_captured = true;
+					break;
+				}
+			}
+
+			if (!already_captured) {
+				for each(auto car in state.cars) {
+					if (car.id == violatingId) {
+						cv::Rect safeBbox = car.bbox & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
+						if (safeBbox.area() > 0) {
+							cv::Mat croppedFrame = currentFrame(safeBbox).clone();
+							AddViolationRecord_Online(violatingId, croppedFrame, L"Wrong Slot", currentFrame, car.bbox);
+						}
+					 break;
+					}
+				}
+			}
+		}
+
+		for each(ViolationRecord_Online^ record in violationsList_online) {
+			System::TimeSpan duration = System::DateTime::Now - record->captureTime;
+			record->durationSeconds = (int)duration.TotalSeconds;
+		}
 	}
+
+	private: System::Void btnClearViolations_online_Click(System::Object^ sender, System::EventArgs^ e) {
+		violationsList_online->Clear();
+		violatingCarTimers_online->Clear();
+		RefreshViolationPanel_Online();
+	}
+
+	// ...rest of existing methods...
 	};
 }
