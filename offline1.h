@@ -7,6 +7,7 @@
 #include <direct.h>  // For _getcwd
 #include "BYTETracker.h"
 #include "ParkingSlot.h"
+#include "ViolationDetailForm.h"
 
 #pragma managed(push, off)
 #define NOMINMAX
@@ -461,6 +462,7 @@ namespace ConsoleApplication3 {
 	private: ref struct ViolationRecord {
 		int carId;
 		Bitmap^ screenshot;
+		Bitmap^ visualizationBitmap;
 		System::String^ violationType;
 		System::DateTime captureTime;
 		int durationSeconds;
@@ -724,7 +726,6 @@ namespace ConsoleApplication3 {
 			   this->label6->TabIndex = 15;
 			   this->label6->Text = L"0";
 			   this->label6->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
-			   this->label6->Click += gcnew System::EventHandler(this, &OfflineUploadForm::label6_Click);
 			   // 
 			   // label5
 			   // 
@@ -860,6 +861,7 @@ namespace ConsoleApplication3 {
 			long long currentTick = cv::getTickCount();
 			double timeRemaining = (nextTick - currentTick) / tickFreq * 1000.0;
 
+			// Check if we need to sleep
 			if (timeRemaining > 2.0) {
 				Threading::Thread::Sleep(1);
 				continue;
@@ -1118,10 +1120,11 @@ namespace ConsoleApplication3 {
 	}
 
 	// *** [NEW] VIOLATION ALERTS METHODS ***
-	private: void AddViolationRecord(int carId, cv::Mat& frameCapture, System::String^ violationType) {
+	private: void AddViolationRecord(int carId, cv::Mat& frameCapture, System::String^ violationType, 
+									 cv::Mat fullFrame, cv::Rect carBox) {
 		if (frameCapture.empty()) return;
 
-		// Convert cv::Mat to Bitmap
+		// Convert cv::Mat to Bitmap (thumbnail)
 		Bitmap^ screenshot = gcnew Bitmap(frameCapture.cols, frameCapture.rows, System::Drawing::Imaging::PixelFormat::Format24bppRgb);
 		System::Drawing::Rectangle rect(0, 0, frameCapture.cols, frameCapture.rows);
 		System::Drawing::Imaging::BitmapData^ bmpData = screenshot->LockBits(rect, System::Drawing::Imaging::ImageLockMode::WriteOnly, screenshot->PixelFormat);
@@ -1131,10 +1134,25 @@ namespace ConsoleApplication3 {
 		}
 		screenshot->UnlockBits(bmpData);
 
+		// Create visualization (darkened background + bright car)
+		cv::Mat visualizationMat = CreateViolationVisualization(fullFrame, carBox);
+		Bitmap^ visualizationBitmap = nullptr;
+		if (!visualizationMat.empty()) {
+			visualizationBitmap = gcnew Bitmap(visualizationMat.cols, visualizationMat.rows, System::Drawing::Imaging::PixelFormat::Format24bppRgb);
+			System::Drawing::Rectangle visRect(0, 0, visualizationMat.cols, visualizationMat.rows);
+			System::Drawing::Imaging::BitmapData^ visBmpData = visualizationBitmap->LockBits(visRect, System::Drawing::Imaging::ImageLockMode::WriteOnly, visualizationBitmap->PixelFormat);
+
+			for (int y = 0; y < visualizationMat.rows; y++) {
+				memcpy((unsigned char*)visBmpData->Scan0.ToPointer() + y * visBmpData->Stride, visualizationMat.data + y * visualizationMat.step, visualizationMat.cols * 3);
+			}
+			visualizationBitmap->UnlockBits(visBmpData);
+		}
+
 		// Create violation record
 		ViolationRecord^ record = gcnew ViolationRecord();
 		record->carId = carId;
 		record->screenshot = screenshot;
+		record->visualizationBitmap = visualizationBitmap;
 		record->violationType = violationType;
 		record->captureTime = System::DateTime::Now;
 		record->durationSeconds = 0;
@@ -1155,6 +1173,13 @@ namespace ConsoleApplication3 {
 			itemPanel->Size = System::Drawing::Size(250, 180);
 			itemPanel->BorderStyle = System::Windows::Forms::BorderStyle::FixedSingle;
 			itemPanel->Margin = System::Windows::Forms::Padding(5);
+			itemPanel->Cursor = System::Windows::Forms::Cursors::Hand;
+			
+			// Store violation record as tag
+			itemPanel->Tag = record;
+			
+			// Add click event
+			itemPanel->Click += gcnew System::EventHandler(this, &OfflineUploadForm::OnViolationItemClick);
 
 			// Screenshot
 			PictureBox^ pbScreenshot = gcnew PictureBox();
@@ -1162,6 +1187,8 @@ namespace ConsoleApplication3 {
 			pbScreenshot->SizeMode = System::Windows::Forms::PictureBoxSizeMode::Zoom;
 			pbScreenshot->Location = System::Drawing::Point(5, 5);
 			pbScreenshot->Size = System::Drawing::Size(240, 100);
+			pbScreenshot->Cursor = System::Windows::Forms::Cursors::Hand;
+			pbScreenshot->Click += gcnew System::EventHandler(this, &OfflineUploadForm::OnViolationItemClick);
 			itemPanel->Controls->Add(pbScreenshot);
 
 			// Info label
@@ -1171,12 +1198,43 @@ namespace ConsoleApplication3 {
 			lblInfo->Size = System::Drawing::Size(240, 65);
 			lblInfo->Text = System::String::Format(L"ID: {0}\nType: {1}\nTime: {2:HH:mm:ss}\nDuration: {3}s",
 				record->carId, record->violationType, record->captureTime, record->durationSeconds);
+			lblInfo->Cursor = System::Windows::Forms::Cursors::Hand;
+			lblInfo->Click += gcnew System::EventHandler(this, &OfflineUploadForm::OnViolationItemClick);
 			itemPanel->Controls->Add(lblInfo);
 
 			flpViolations->Controls->Add(itemPanel);
 		}
 
 		lblViolationCount->Text = System::String::Format(L"Violations: {0}", violationsList->Count);
+	}
+	
+	private: System::Void OnViolationItemClick(System::Object^ sender, System::EventArgs^ e) {
+		// Find the parent panel
+		Control^ clickedControl = safe_cast<Control^>(sender);
+		Panel^ itemPanel = nullptr;
+		
+		if (clickedControl->GetType() == Panel::typeid) {
+			itemPanel = safe_cast<Panel^>(clickedControl);
+		}
+		else {
+			// Find parent panel
+			itemPanel = safe_cast<Panel^>(clickedControl->Parent);
+		}
+		
+		if (itemPanel && itemPanel->Tag != nullptr) {
+			ViolationRecord^ record = safe_cast<ViolationRecord^>(itemPanel->Tag);
+			
+			// Open pop-up form with visualization
+			ViolationDetailForm^ detailForm = gcnew ViolationDetailForm(
+				record->carId,
+				record->screenshot,
+				record->visualizationBitmap,
+				record->violationType,
+				record->captureTime,
+				record->durationSeconds
+			);
+			detailForm->ShowDialog(this);
+		}
 	}
 
 	private: void CheckViolations(cv::Mat& currentFrame) {
@@ -1196,7 +1254,7 @@ namespace ConsoleApplication3 {
 					cv::Rect safeBbox = car.bbox & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
 					if (safeBbox.area() > 0) {
 						cv::Mat croppedFrame = currentFrame(safeBbox).clone();
-						AddViolationRecord(car.id, croppedFrame, L"Overstay");
+						AddViolationRecord(car.id, croppedFrame, L"Overstay", currentFrame, car.bbox);
 					}
 				}
 			}
@@ -1214,13 +1272,13 @@ namespace ConsoleApplication3 {
 
 			if (!already_captured) {
 				// Find the car with this ID and capture its bbox
-			 for each(auto car in state.cars) {
+				for each(auto car in state.cars) {
 					if (car.id == violatingId) {
 						// Capture only the bounding box region
 						cv::Rect safeBbox = car.bbox & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
 						if (safeBbox.area() > 0) {
 							cv::Mat croppedFrame = currentFrame(safeBbox).clone();
-							AddViolationRecord(violatingId, croppedFrame, L"Wrong Slot");
+							AddViolationRecord(violatingId, croppedFrame, L"Wrong Slot", currentFrame, car.bbox);
 						}
 						break;
 					}
@@ -1273,11 +1331,30 @@ namespace ConsoleApplication3 {
 			trackBar1->Value = 0;
 		}
 	}
-private: System::Void label6_Click(System::Object^ sender, System::EventArgs^ e) {
-}
-private: System::Void label4_Click(System::Object^ sender, System::EventArgs^ e) {
-}
-private: System::Void label2_Click(System::Object^ sender, System::EventArgs^ e) {
+
+	// *** [NEW] CREATE VIOLATION VISUALIZATION ***
+	static cv::Mat CreateViolationVisualization(cv::Mat fullFrame, cv::Rect carBox) {
+	if (fullFrame.empty()) return cv::Mat();
+	
+	// 1. สำเนาของเฟรม
+	cv::Mat result = fullFrame.clone();
+	
+	// 2. ทำให้มืด 70% (เหลือ 30% ความสว่าง)
+	result = result * 0.3;
+	
+	// 3. ตัดเอาเฉพาะรถจากเฟรมสว่าง
+	cv::Rect safeBbox = carBox & cv::Rect(0, 0, fullFrame.cols, fullFrame.rows);
+	if (safeBbox.area() > 0) {
+		cv::Mat carROI = fullFrame(safeBbox).clone();
+		
+		// 4. วางรถสว่างกลับลงบนภาพมืด
+		carROI.copyTo(result(safeBbox));
+		
+		// 5. วาดกรอบสี่เหลี่ยมสว่าง (เหลือง)
+		cv::rectangle(result, safeBbox, cv::Scalar(0, 255, 255), 3);
+	}
+	
+	return result;
 }
 };
 }
