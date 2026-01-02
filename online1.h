@@ -80,11 +80,50 @@ static const int VIOLATION_CHECK_INTERVAL_MS_ONLINE = 500;
 static std::atomic<int> g_droppedFrames_online(0);
 static std::atomic<int> g_processedFramesCount_online(0);
 
+// *** [PHASE 3] MEMORY OPTIMIZATION ***
+
+struct CachedLabel_Online {
+	std::string text;
+	cv::Size size;
+	int baseline;
+	bool isViolating;
+	int classId;
+	
+	CachedLabel_Online() : baseline(0), isViolating(false), classId(-1) {}
+};
+
+static std::map<int, CachedLabel_Online> g_labelCache_online;
+static cv::Mat g_redOverlayBuffer_online; // [PHASE 3] Reusable red overlay buffer
+
+// [PHASE 3] FPS Monitor
+struct FPSMonitor_Online {
+	double alpha = 0.1;
+	double avgFPS = 0.0;
+	long long lastTick = 0;
+	
+	void update() {
+		long long currentTick = cv::getTickCount();
+		if (lastTick != 0) {
+			double timeSec = (currentTick - lastTick) / cv::getTickFrequency();
+			if (timeSec > 0) {
+				double fps = 1.0 / timeSec;
+				if (avgFPS == 0) avgFPS = fps;
+				else avgFPS = avgFPS * (1.0 - alpha) + fps * alpha;
+			}
+		}
+		lastTick = currentTick;
+	}
+};
+
+static FPSMonitor_Online g_fpsMonitor_online;
+
 // --- Helper Functions ---
 
 static void ResetParkingCache_Online() {
 	g_cachedParkingOverlay_online = cv::Mat();
 	g_lastDrawnStatus_online.clear();
+	g_labelCache_online.clear(); // [PHASE 3] Clear label cache
+	g_redOverlayBuffer_online = cv::Mat(); // [PHASE 3] Clear red overlay buffer
 }
 
 static cv::Mat FormatToLetterbox(const cv::Mat& source, int width, int height, float& ratio, int& dw, int& dh) {
@@ -211,6 +250,23 @@ static bool LoadParkingTemplate_Online(const std::string& filename) {
 		return true;
 	}
 	return false;
+}
+
+// *** [NEW] CREATE VIOLATION VISUALIZATION ***
+static cv::Mat CreateViolationVisualization(cv::Mat fullFrame, cv::Rect carBox) {
+	if (fullFrame.empty()) return cv::Mat();
+	
+	cv::Mat result = fullFrame.clone();
+	result = result * 0.3;
+	
+	cv::Rect safeBbox = carBox & cv::Rect(0, 0, fullFrame.cols, fullFrame.rows);
+	if (safeBbox.area() > 0) {
+		cv::Mat carROI = fullFrame(safeBbox).clone();
+		carROI.copyTo(result(safeBbox));
+		cv::rectangle(result, safeBbox, cv::Scalar(0, 255, 255), 3);
+	}
+	
+	return result;
 }
 
 // *** WORKER PROCESS (AI Thread) ***
@@ -357,6 +413,9 @@ static void ProcessFrameOnline(const cv::Mat& inputFrame, long long frameSeq) {
 static void DrawSceneOnline(const cv::Mat& frame, long long displaySeq, cv::Mat& outResult) {
 	if (frame.empty()) return;
 
+	// [PHASE 3] Update FPS
+	g_fpsMonitor_online.update();
+
 	if (g_drawingBuffer_online.size() != frame.size() || g_drawingBuffer_online.type() != frame.type()) {
 		g_drawingBuffer_online.create(frame.size(), frame.type());
 	}
@@ -399,8 +458,13 @@ static void DrawSceneOnline(const cv::Mat& frame, long long displaySeq, cv::Mat&
 
 	// Car Layer
 	if (!isFuture) {
+		// [PHASE 3] Track cars in current frame for GC
+		std::set<int> currentFrameCarIds;
+		
 		for (const auto& obj : state.cars) {
 			if (obj.classId >= 0 && obj.classId < g_classes.size()) {
+				currentFrameCarIds.insert(obj.id);
+				
 				cv::Rect box = obj.bbox;
 				bool isViolating = (state.violatingCarIds.count(obj.id) > 0);
 
@@ -408,8 +472,11 @@ static void DrawSceneOnline(const cv::Mat& frame, long long displaySeq, cv::Mat&
 					cv::Rect roi = box & cv::Rect(0, 0, outResult.cols, outResult.rows);
 					if (roi.area() > 0) {
 						cv::Mat roiMat = outResult(roi);
-						cv::Mat colorBlock(roi.size(), CV_8UC3, cv::Scalar(0, 0, 255));
-						cv::addWeighted(roiMat, 0.6, colorBlock, 0.4, 0, roiMat);
+						// [PHASE 3] Reuse red overlay buffer
+						if (g_redOverlayBuffer_online.size() != roi.size() || g_redOverlayBuffer_online.type() != CV_8UC3) {
+							g_redOverlayBuffer_online = cv::Mat(roi.size(), CV_8UC3, cv::Scalar(0, 0, 255));
+						}
+						cv::addWeighted(roiMat, 0.6, g_redOverlayBuffer_online, 0.4, 0, roiMat);
 					}
 					cv::rectangle(outResult, box, cv::Scalar(0, 0, 255), 2);
 				}
@@ -417,48 +484,61 @@ static void DrawSceneOnline(const cv::Mat& frame, long long displaySeq, cv::Mat&
 					cv::rectangle(outResult, box, g_colors[obj.classId], 2);
 				}
 
-				std::string label = "ID:" + std::to_string(obj.id);
-				if (isViolating) label += " [VIOLATION]";
-				else if (!parkingEnabled) label += " " + g_classes[obj.classId]; // Use local variable (already loaded)
-
-				int baseline;
-				cv::Size textSize = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
+				// [PHASE 3] Label Caching Logic
+				bool needsUpdate = false;
+				auto it = g_labelCache_online.find(obj.id);
+				
+				if (it == g_labelCache_online.end()) {
+					needsUpdate = true;
+				}
+				else {
+					CachedLabel_Online& cached = it->second;
+					if (cached.isViolating != isViolating || cached.classId != obj.classId) {
+						needsUpdate = true;
+					}
+					if (cached.text.empty()) needsUpdate = true;
+				}
+				
+				if (needsUpdate) {
+					CachedLabel_Online cl;
+					cl.isViolating = isViolating;
+					cl.classId = obj.classId;
+					cl.text = "ID:" + std::to_string(obj.id);
+					if (isViolating) cl.text += " [VIOLATION]";
+					else if (!parkingEnabled) cl.text += " " + g_classes[obj.classId];
+					
+					cl.size = cv::getTextSize(cl.text, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &cl.baseline);
+					g_labelCache_online[obj.id] = cl;
+				}
+				
+				// Draw using Cache
+				CachedLabel_Online& labelInfo = g_labelCache_online[obj.id];
 				cv::Scalar labelBg = isViolating ? cv::Scalar(0, 0, 255) : g_colors[obj.classId];
 
-				cv::rectangle(outResult, cv::Point(box.x, box.y - textSize.height - 5), cv::Point(box.x + textSize.width, box.y), labelBg, -1);
-				cv::putText(outResult, label, cv::Point(box.x, box.y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
+				cv::rectangle(outResult, cv::Point(box.x, box.y - labelInfo.size.height - 5), 
+							  cv::Point(box.x + labelInfo.size.width, box.y), labelBg, -1);
+				cv::putText(outResult, labelInfo.text, cv::Point(box.x, box.y - 5), 
+							cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
+			}
+		}
+		
+		// [PHASE 3] Cache Garbage Collection
+		if (g_labelCache_online.size() > 100 && g_labelCache_online.size() > currentFrameCarIds.size() * 2) {
+			auto it = g_labelCache_online.begin();
+			while (it != g_labelCache_online.end()) {
+				if (currentFrameCarIds.find(it->first) == currentFrameCarIds.end()) {
+					it = g_labelCache_online.erase(it);
+				}
+				else {
+					++it;
+				}
 			}
 		}
 	}
 
-	std::string stats = "Obj: " + std::to_string(state.cars.size());
+	// [PHASE 3] Draw Stats (Obj count + FPS)
+	std::string stats = "Obj: " + std::to_string(state.cars.size()) + " | FPS: " + std::to_string((int)g_fpsMonitor_online.avgFPS);
 	cv::putText(outResult, stats, cv::Point(10, 25), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
-}
-
-// *** [NEW] CREATE VIOLATION VISUALIZATION ***
-
-static cv::Mat CreateViolationVisualization(cv::Mat fullFrame, cv::Rect carBox) {
-	if (fullFrame.empty()) return cv::Mat();
-	
-	// 1. สำเนาของเฟรม
-	cv::Mat result = fullFrame.clone();
-	
-	// 2. ทำให้มืด 70% (เหลือ 30% ความสว่าง)
-	result = result * 0.3;
-	
-	// 3. ตัดเอาเฉพาะรถจากเฟรมสว่าง
-	cv::Rect safeBbox = carBox & cv::Rect(0, 0, fullFrame.cols, fullFrame.rows);
-	if (safeBbox.area() > 0) {
-		cv::Mat carROI = fullFrame(safeBbox).clone();
-		
-		// 4. วางรถสว่างกลับลงบนภาพมืด
-		carROI.copyTo(result(safeBbox));
-		
-		// 5. วาดกรอบสี่เหลี่ยมสว่าง (เหลือง)
-		cv::rectangle(result, safeBbox, cv::Scalar(0, 255, 255), 3);
-	}
-	
-	return result;
 }
 
 #pragma managed(pop)
@@ -1469,8 +1549,8 @@ private: System::Void UploadForm_FormClosing(System::Object^ sender, FormClosing
 		}
 	}
 
-	private: void CheckViolations_Online(cv::Mat& currentFrame) {
-		// [PHASE 2] Throttle violation checks to 500ms
+private: void CheckViolations_Online(cv::Mat& currentFrame) {
+			// [PHASE 2] Throttle violation checks to 500ms
 		auto now = std::chrono::steady_clock::now();
 		auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_lastViolationCheck_online).count();
 		
