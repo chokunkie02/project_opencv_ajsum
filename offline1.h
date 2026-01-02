@@ -19,6 +19,7 @@
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <atomic>
 
 // ==========================================
 //  PART 1: GLOBAL VARIABLES & SETTINGS
@@ -59,21 +60,30 @@ static cv::VideoCapture* g_cap_offline = nullptr;
 static cv::Mat g_latestRawFrame_offline;
 static long long g_frameSeq_offline = 0;
 static std::mutex g_frameMutex_offline;
+static std::mutex g_captureMutex_offline; // [NEW] Protect VideoCapture operations
 static double g_videoFPS = 30.0;
 
 static std::mutex g_aiMutex_offline;
 static bool g_modelReady_offline = false;
-static bool g_parkingEnabled_offline = false;
+static std::atomic<bool> g_parkingEnabled_offline(false); // [FIXED] Use atomic
 
 // Drawing Cache
 static cv::Mat g_cachedParkingOverlay;
 static std::map<int, SlotStatus> g_lastDrawnStatus;
-static cv::Mat g_drawingBuffer; // Memory Pool
+static cv::Mat g_drawingBuffer;
 
 // *** [NEW] PROCESSED FRAME SHARING (Pipeline Output) ***
 static cv::Mat g_processedFrame_shared;
 static long long g_processedSeq_shared = 0;
 static std::mutex g_processedMutex;
+
+// *** [PHASE 2] PERFORMANCE OPTIMIZATION ***
+static std::chrono::steady_clock::time_point g_lastViolationCheck = std::chrono::steady_clock::now();
+static const int VIOLATION_CHECK_INTERVAL_MS = 500;
+
+// *** [PHASE 2] FRAME DROP LOGIC ***
+static std::atomic<int> g_droppedFrames(0);
+static std::atomic<int> g_processedFramesCount(0);
 
 // ==========================================
 //  PART 2: HELPER FUNCTIONS (STATIC)
@@ -139,7 +149,7 @@ static bool LoadParkingTemplate(const std::string& filename) {
 static void GetRawFrame(cv::Mat& outFrame, long long& outSeq) {
 	std::lock_guard<std::mutex> lock(g_frameMutex_offline);
 	if (!g_latestRawFrame_offline.empty()) {
-		outFrame = g_latestRawFrame_offline;
+		outFrame = g_latestRawFrame_offline.clone(); // [FIXED] Deep copy
 		outSeq = g_frameSeq_offline;
 	}
 }
@@ -148,22 +158,28 @@ static void GetRawFrame(cv::Mat& outFrame, long long& outSeq) {
 static void GetProcessedFrame(cv::Mat& outFrame, long long& outSeq) {
 	std::lock_guard<std::mutex> lock(g_processedMutex);
 	if (!g_processedFrame_shared.empty()) {
-		outFrame = g_processedFrame_shared;
+		outFrame = g_processedFrame_shared.clone(); // [FIXED] Deep copy
 		outSeq = g_processedSeq_shared;
 	}
 }
 
 static void OpenCamera(const std::string& filename) {
-	std::lock_guard<std::mutex> lock(g_frameMutex_offline);
-	if (g_cap_offline) { delete g_cap_offline; g_cap_offline = nullptr; }
+	std::lock_guard<std::mutex> capLock(g_captureMutex_offline);
+	std::lock_guard<std::mutex> frameLock(g_frameMutex_offline);
+	std::lock_guard<std::mutex> stateLock(g_stateMutex);
+	
+	if (g_cap_offline) { 
+		delete g_cap_offline; 
+		g_cap_offline = nullptr; 
+	}
+	
 	g_cap_offline = new cv::VideoCapture(filename);
 	if (g_cap_offline->isOpened()) {
 		g_videoFPS = g_cap_offline->get(cv::CAP_PROP_FPS);
 		if (g_videoFPS <= 0 || g_videoFPS > 60) g_videoFPS = 30.0;
 	}
+	
 	g_frameSeq_offline = 0;
-
-	std::lock_guard<std::mutex> slock(g_stateMutex);
 	g_appState = AppState();
 	ResetParkingCache();
 }
@@ -245,7 +261,8 @@ static void ProcessFrame(const cv::Mat& inputFrame, long long frameSeq) {
 		std::map<int, float> calculatedOccupancy;
 		std::set<int> violations;
 
-		if (g_parkingEnabled_offline && g_pm_logic) {
+		bool parkingEnabled = g_parkingEnabled_offline.load(); // [FIXED] Atomic read
+		if (parkingEnabled && g_pm_logic) {
 			static bool templateSet = false;
 			if (!templateSet) {
 				g_pm_logic->setTemplateFrame(inputFrame);
@@ -307,7 +324,8 @@ static void DrawScene(const cv::Mat& frame, long long displaySeq, cv::Mat& outRe
 	bool isFuture = (state.frameSequence > displaySeq);
 
 	// Parking Layer
-	if (g_parkingEnabled_offline && g_pm_display) {
+	bool parkingEnabled = g_parkingEnabled_offline.load();
+	if (parkingEnabled && g_pm_display) {
 		bool statusChanged = (state.slotStatuses != g_lastDrawnStatus);
 		bool noCache = g_cachedParkingOverlay.empty() || g_cachedParkingOverlay.size() != outResult.size();
 
@@ -334,12 +352,11 @@ static void DrawScene(const cv::Mat& frame, long long displaySeq, cv::Mat& outRe
 	// Car Layer
 	if (!isFuture) {
 		for (const auto& obj : state.cars) {
-			if (obj.classId >= 0 && obj.classId < g_classes_offline.size()) {
+			if (obj.classId >= 0 && obj.classId < (int)g_classes_offline.size()) {
 				cv::Rect box = obj.bbox;
 				bool isViolating = (state.violatingCarIds.count(obj.id) > 0);
 
 				if (isViolating) {
-					// Filled Violation Box
 					cv::Rect roi = box & cv::Rect(0, 0, outResult.cols, outResult.rows);
 					if (roi.area() > 0) {
 						cv::Mat roiMat = outResult(roi);
@@ -354,7 +371,7 @@ static void DrawScene(const cv::Mat& frame, long long displaySeq, cv::Mat& outRe
 
 				std::string label = "ID:" + std::to_string(obj.id);
 				if (isViolating) label += " [!]";
-				else if (!g_parkingEnabled_offline) label += " " + g_classes_offline[obj.classId];
+				else if (!parkingEnabled) label += " " + g_classes_offline[obj.classId];
 
 				int baseline;
 				cv::Size textSize = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
@@ -406,8 +423,8 @@ namespace ConsoleApplication3 {
 			if (components) delete components;
 			if (g_pm_logic) { delete g_pm_logic; g_pm_logic = nullptr; }
 			if (g_pm_display) { delete g_pm_display; g_pm_display = nullptr; }
-			if (bmpBuffer1) delete bmpBuffer1;
-			if (bmpBuffer2) delete bmpBuffer2;
+			// [HOTFIX] Don't manually delete managed Bitmaps - GC will handle them
+			// bmpBuffer1 and bmpBuffer2 are managed objects (Bitmap^)
 		}
 
 	private: System::Windows::Forms::Timer^ timer1;
@@ -762,7 +779,7 @@ namespace ConsoleApplication3 {
 			   // 
 			   // btnClearViolations
 			   // 
-			   this->btnClearViolations->BackColor = System::Drawing::Color::Tomato;
+               this->btnClearViolations->BackColor = System::Drawing::Color::Tomato;
 			   this->btnClearViolations->FlatStyle = System::Windows::Forms::FlatStyle::Flat;
 			   this->btnClearViolations->Font = (gcnew System::Drawing::Font(L"Segoe UI", 10));
 			   this->btnClearViolations->Location = System::Drawing::Point(757, 5);
@@ -771,7 +788,6 @@ namespace ConsoleApplication3 {
 			   this->btnClearViolations->TabIndex = 2;
 			   this->btnClearViolations->Text = L"Clear All";
 			   this->btnClearViolations->UseVisualStyleBackColor = false;
-			   this->btnClearViolations->Click += gcnew System::EventHandler(this, &OfflineUploadForm::btnClearViolations_Click);
 			   // 
 			   // lblViolationCount
 			   // 
@@ -833,23 +849,32 @@ namespace ConsoleApplication3 {
 		Bitmap^ targetBmp = useBuffer1 ? bmpBuffer1 : bmpBuffer2;
 
 		if (targetBmp == nullptr || targetBmp->Width != w || targetBmp->Height != h) {
-			if (targetBmp != nullptr) delete targetBmp;
 			targetBmp = gcnew Bitmap(w, h, System::Drawing::Imaging::PixelFormat::Format24bppRgb);
-			if (useBuffer1) bmpBuffer1 = targetBmp; else bmpBuffer2 = targetBmp;
+			if (useBuffer1) bmpBuffer1 = targetBmp; 
+			else bmpBuffer2 = targetBmp;
 		}
 
+		// [PHASE 2] Optimized memcpy
 		System::Drawing::Rectangle rect = System::Drawing::Rectangle(0, 0, w, h);
 		System::Drawing::Imaging::BitmapData^ bmpData = targetBmp->LockBits(rect, System::Drawing::Imaging::ImageLockMode::WriteOnly, targetBmp->PixelFormat);
-		for (int y = 0; y < h; y++) {
-			memcpy((unsigned char*)bmpData->Scan0.ToPointer() + y * bmpData->Stride, mat.data + y * mat.step, w * 3);
+		
+		if (bmpData->Stride == mat.step) {
+			// Fast path: single memcpy
+			memcpy((unsigned char*)bmpData->Scan0.ToPointer(), mat.data, (size_t)h * mat.step);
+		} else {
+			// Fallback: line by line
+			for (int y = 0; y < h; y++) {
+				memcpy((unsigned char*)bmpData->Scan0.ToPointer() + y * bmpData->Stride, mat.data + y * mat.step, w * 3);
+			}
 		}
+		
 		targetBmp->UnlockBits(bmpData);
 
 		pictureBox1->Image = targetBmp;
 		useBuffer1 = !useBuffer1;
 	}
 
-	// *** [OPTIMIZED] READER THREAD - ?????????????????? ***
+	// *** [OPTIMIZED] READER THREAD ***
 	private: void VideoReaderLoop() {
 		double ticksPerFrame = 1000.0 / 30.0;
 		if (g_videoFPS > 0) ticksPerFrame = 1000.0 / g_videoFPS;
@@ -861,7 +886,6 @@ namespace ConsoleApplication3 {
 			long long currentTick = cv::getTickCount();
 			double timeRemaining = (nextTick - currentTick) / tickFreq * 1000.0;
 
-			// Check if we need to sleep
 			if (timeRemaining > 2.0) {
 				Threading::Thread::Sleep(1);
 				continue;
@@ -871,37 +895,52 @@ namespace ConsoleApplication3 {
 				cv::Mat tempFrame;
 				bool success = false;
 
-				if (g_cap_offline && g_cap_offline->isOpened()) {
-					success = g_cap_offline->read(tempFrame);
-				}
-				else {
-					break;
+				{
+					std::lock_guard<std::mutex> lock(g_captureMutex_offline);
+					if (g_cap_offline && g_cap_offline->isOpened()) {
+						success = g_cap_offline->read(tempFrame);
+					}
+					else {
+						break;
+					}
 				}
 
 				if (success && !tempFrame.empty()) {
 					long long currentSeq;
 					{
 						std::lock_guard<std::mutex> lock(g_frameMutex_offline);
-						g_latestRawFrame_offline = tempFrame;
+						g_latestRawFrame_offline = tempFrame.clone();
 						g_frameSeq_offline++;
 						currentSeq = g_frameSeq_offline;
 					}
 
-					// *** [NEW] ??????????? (Reader ??) ***
-					cv::Mat renderedFrame;
-					DrawScene(tempFrame, currentSeq, renderedFrame);
-
-					// ???????????????
-					if (!renderedFrame.empty()) {
+					// [PHASE 2] Frame Drop Logic
+					bool shouldDrop = false;
+					{
 						std::lock_guard<std::mutex> lock(g_processedMutex);
-						g_processedFrame_shared = renderedFrame.clone();
-						g_processedSeq_shared = currentSeq;
+						if (currentSeq - g_processedSeq_shared > 3) {
+							shouldDrop = true;
+							g_droppedFrames++;
+						}
+					}
+
+					if (!shouldDrop) {
+						cv::Mat renderedFrame;
+						DrawScene(tempFrame, currentSeq, renderedFrame);
+
+						if (!renderedFrame.empty()) {
+							std::lock_guard<std::mutex> lock(g_processedMutex);
+							g_processedFrame_shared = renderedFrame.clone();
+							g_processedSeq_shared = currentSeq;
+							g_processedFramesCount++;
+						}
 					}
 
 					nextTick += (long long)(ticksPerFrame * tickFreq / 1000.0);
 					if (cv::getTickCount() > nextTick) nextTick = cv::getTickCount();
 				}
 				else {
+					std::lock_guard<std::mutex> lock(g_captureMutex_offline);
 					if (g_cap_offline && g_cap_offline->isOpened()) break;
 					Threading::Thread::Sleep(100);
 				}
@@ -929,7 +968,7 @@ namespace ConsoleApplication3 {
 		}
 	}
 
-	// *** [OPTIMIZED] UI TIMER - ??????????????????????? (0.1ms) ***
+	// *** [OPTIMIZED] UI TIMER ***
 	private: System::Void timer1_Tick(System::Object^ sender, System::EventArgs^ e) {
 		try {
 			cv::Mat finalFrame;
@@ -941,29 +980,30 @@ namespace ConsoleApplication3 {
 
 			if (!finalFrame.empty()) {
 				UpdatePictureBox(finalFrame);
-				// Check for violations
-				if (g_parkingEnabled_offline) {
+				
+				if (g_parkingEnabled_offline.load()) {
 					cv::Mat frameCopy = finalFrame.clone();
 					CheckViolations(frameCopy);
 				}
 			}
 
-			// *** [NEW] SYNC TRACKBAR WITH CURRENT FRAME POSITION ***
-			if (!isTrackBarDragging && g_cap_offline && g_cap_offline->isOpened() && isProcessing) {
-				long long currentFrame = (long long)g_cap_offline->get(cv::CAP_PROP_POS_FRAMES);
-				if (currentFrame <= trackBar1->Maximum) {
-					trackBar1->Value = (int)currentFrame;
+			if (!isTrackBarDragging && isProcessing) {
+				std::lock_guard<std::mutex> lock(g_captureMutex_offline);
+				if (g_cap_offline && g_cap_offline->isOpened()) {
+					long long currentFrame = (long long)g_cap_offline->get(cv::CAP_PROP_POS_FRAMES);
+					if (currentFrame <= trackBar1->Maximum) {
+						trackBar1->Value = (int)currentFrame;
+					}
 				}
 			}
 
-			// *** [NEW] UPDATE PARKING STATISTICS LABELS ***
 			AppState state;
 			{
 				std::lock_guard<std::mutex> lock(g_stateMutex);
 				state = g_appState;
 			}
 
-			if (g_parkingEnabled_offline && !state.slotStatuses.empty()) {
+			if (g_parkingEnabled_offline.load() && !state.slotStatuses.empty()) {
 				int emptyCount = 0;
 				int occupiedCount = 0;
 
@@ -988,20 +1028,33 @@ namespace ConsoleApplication3 {
 	}
 
 	private: void StartProcessing() {
+		if (readerThread != nullptr && readerThread->IsAlive) {
+			shouldStop = true;
+			if (!readerThread->Join(2000)) {
+				readerThread->Abort();
+			}
+		}
+
 		shouldStop = false;
 		isProcessing = true;
+		
+		// [PHASE 2] Reset counters
+		g_droppedFrames = 0;
+		g_processedFramesCount = 0;
+		g_lastViolationCheck = std::chrono::steady_clock::now();
+		
 		{
 			std::lock_guard<std::mutex> lock(g_stateMutex);
 			g_appState = AppState();
 		}
 		ResetParkingCache();
+		
 		if (!processingWorker->IsBusy) processingWorker->RunWorkerAsync();
 
-		if (readerThread == nullptr || !readerThread->IsAlive) {
-			readerThread = gcnew Thread(gcnew ThreadStart(this, &OfflineUploadForm::VideoReaderLoop));
-			readerThread->IsBackground = true;
-			readerThread->Start();
-		}
+		readerThread = gcnew Thread(gcnew ThreadStart(this, &OfflineUploadForm::VideoReaderLoop));
+		readerThread->IsBackground = true;
+		readerThread->Start();
+		
 		timer1->Start();
 	}
 
@@ -1009,7 +1062,20 @@ namespace ConsoleApplication3 {
 		shouldStop = true;
 		isProcessing = false;
 		timer1->Stop();
-		if (processingWorker->IsBusy) processingWorker->CancelAsync();
+		
+		if (processingWorker->IsBusy) {
+			processingWorker->CancelAsync();
+			for (int i = 0; i < 20 && processingWorker->IsBusy; i++) {
+				Threading::Thread::Sleep(50);
+			}
+		}
+		
+		if (readerThread != nullptr && readerThread->IsAlive) {
+			if (!readerThread->Join(2000)) {
+				readerThread->Abort();
+			}
+			readerThread = nullptr;
+		}
 	}
 
 	private: System::Void LoadModel_DoWork(System::Object^ sender, DoWorkEventArgs^ e) {
@@ -1108,7 +1174,7 @@ namespace ConsoleApplication3 {
 	}
 
 	private: System::Void chkParkingMode_CheckedChanged(System::Object^ sender, System::EventArgs^ e) {
-		g_parkingEnabled_offline = chkParkingMode->Checked;
+		g_parkingEnabled_offline.store(chkParkingMode->Checked); // [FIXED] Atomic write
 		if (chkParkingMode->Checked) {
 			label1->Text = L"Parking Mode ON";
 			label1->BackColor = System::Drawing::Color::LightGreen;
@@ -1238,19 +1304,26 @@ namespace ConsoleApplication3 {
 	}
 
 	private: void CheckViolations(cv::Mat& currentFrame) {
+		// [PHASE 2] Throttle to 500ms
+		auto now = std::chrono::steady_clock::now();
+		auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_lastViolationCheck).count();
+		
+		if (elapsed < VIOLATION_CHECK_INTERVAL_MS) {
+			return;
+		}
+		g_lastViolationCheck = now;
+
 		AppState state;
 		{
 			std::lock_guard<std::mutex> lock(g_stateMutex);
 			state = g_appState;
 		}
 
-		// Check for overstay (> 10 seconds = 300 frames at 30fps)
 		for each(auto car in state.cars) {
-			if (car.framesStill > 300) { // 10 seconds
+			if (car.framesStill > 300) {
 				if (!violatingCarTimers->ContainsKey(car.id)) {
 					violatingCarTimers->Add(car.id, System::DateTime::Now);
 					
-					// Capture only the bounding box region
 					cv::Rect safeBbox = car.bbox & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
 					if (safeBbox.area() > 0) {
 						cv::Mat croppedFrame = currentFrame(safeBbox).clone();
@@ -1260,7 +1333,6 @@ namespace ConsoleApplication3 {
 			}
 		}
 
-		// Check for wrong slot (parking violation)
 		for each(int violatingId in state.violatingCarIds) {
 			bool already_captured = false;
 			for each(ViolationRecord^ record in violationsList) {
@@ -1271,10 +1343,8 @@ namespace ConsoleApplication3 {
 			}
 
 			if (!already_captured) {
-				// Find the car with this ID and capture its bbox
 				for each(auto car in state.cars) {
 					if (car.id == violatingId) {
-						// Capture only the bounding box region
 						cv::Rect safeBbox = car.bbox & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
 						if (safeBbox.area() > 0) {
 							cv::Mat croppedFrame = currentFrame(safeBbox).clone();
@@ -1286,20 +1356,12 @@ namespace ConsoleApplication3 {
 			}
 		}
 
-		// Update durations
 		for each(ViolationRecord^ record in violationsList) {
 			System::TimeSpan duration = System::DateTime::Now - record->captureTime;
 			record->durationSeconds = (int)duration.TotalSeconds;
 		}
 	}
 
-	private: System::Void btnClearViolations_Click(System::Object^ sender, System::EventArgs^ e) {
-		violationsList->Clear();
-		violatingCarTimers->Clear();
-		RefreshViolationPanel();
-	}
-
-	// *** [NEW] TRACKBAR EVENT HANDLERS ***
 	private: System::Void trackBar1_MouseDown(System::Object^ sender, System::Windows::Forms::MouseEventArgs^ e) {
 		isTrackBarDragging = true;
 		StopProcessing();
@@ -1307,6 +1369,8 @@ namespace ConsoleApplication3 {
 
 	private: System::Void trackBar1_MouseUp(System::Object^ sender, System::Windows::Forms::MouseEventArgs^ e) {
 		isTrackBarDragging = false;
+		// [FIXED] Protect VideoCapture access
+		std::lock_guard<std::mutex> lock(g_captureMutex_offline);
 		if (g_cap_offline && g_cap_offline->isOpened()) {
 			long long framePos = trackBar1->Value;
 			g_cap_offline->set(cv::CAP_PROP_POS_FRAMES, framePos);
@@ -1315,14 +1379,20 @@ namespace ConsoleApplication3 {
 	}
 
 	private: System::Void trackBar1_Scroll(System::Object^ sender, System::EventArgs^ e) {
-		if (isTrackBarDragging && g_cap_offline && g_cap_offline->isOpened()) {
-			long long framePos = trackBar1->Value;
-			g_cap_offline->set(cv::CAP_PROP_POS_FRAMES, framePos);
+		// [FIXED] Protect VideoCapture access
+		if (isTrackBarDragging) {
+			std::lock_guard<std::mutex> lock(g_captureMutex_offline);
+			if (g_cap_offline && g_cap_offline->isOpened()) {
+				long long framePos = trackBar1->Value;
+				g_cap_offline->set(cv::CAP_PROP_POS_FRAMES, framePos);
+			}
 		}
 	}
 
 	// *** INITIALIZE TRACKBAR AFTER VIDEO LOAD ***
 	private: void InitializeTrackBar() {
+		// [FIXED] Protect VideoCapture access
+		std::lock_guard<std::mutex> lock(g_captureMutex_offline);
 		if (g_cap_offline && g_cap_offline->isOpened()) {
 			double frameCount = g_cap_offline->get(cv::CAP_PROP_FRAME_COUNT);
 			totalFrames = (long long)frameCount;
@@ -1350,7 +1420,7 @@ namespace ConsoleApplication3 {
 		// 4. วางรถสว่างกลับลงบนภาพมืด
 		carROI.copyTo(result(safeBbox));
 		
-		// 5. วาดกรอบสี่เหลี่ยมสว่าง (เหลือง)
+			// 5. วาดกรอบสี่เหลี่ยมสว่าง (เหลือง)
 		cv::rectangle(result, safeBbox, cv::Scalar(0, 255, 255), 3);
 	}
 	
