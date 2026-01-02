@@ -80,6 +80,10 @@ static const int VIOLATION_CHECK_INTERVAL_MS_ONLINE = 500;
 static std::atomic<int> g_droppedFrames_online(0);
 static std::atomic<int> g_processedFramesCount_online(0);
 
+// [FIX] Stream stability improvements
+static const int MAX_FRAME_LAG_ONLINE = 10; // Relaxed from 3 to 10 frames
+static const int NETWORK_BUFFER_SIZE = 5;    // Network jitter buffer
+
 // *** [PHASE 3] MEMORY OPTIMIZATION ***
 
 struct CachedLabel_Online {
@@ -154,7 +158,7 @@ static cv::Mat FormatToLetterbox(const cv::Mat& source, int width, int height, f
 static void GetRawFrameOnline(cv::Mat& outFrame, long long& outSeq) {
 	std::lock_guard<std::mutex> lock(g_frameMutex);
 	if (!g_latestRawFrame.empty()) {
-		outFrame = g_latestRawFrame.clone(); // [PHASE 1 FIX] Deep copy to prevent race condition
+		outFrame = g_latestRawFrame; // [FIX] Shallow copy for speed (AI thread clones if needed)
 		outSeq = g_frameSeq_online;
 	}
 }
@@ -163,7 +167,7 @@ static void GetRawFrameOnline(cv::Mat& outFrame, long long& outSeq) {
 static void GetProcessedFrameOnline(cv::Mat& outFrame, long long& outSeq) {
 	std::lock_guard<std::mutex> lock(g_processedMutex_online);
 	if (!g_processedFrame_online.empty()) {
-		outFrame = g_processedFrame_online.clone(); // [PHASE 1 FIX] Deep copy to prevent race condition
+		outFrame = g_processedFrame_online; // [FIX] Shallow copy for speed
 		outSeq = g_processedSeq_online;
 	}
 }
@@ -187,11 +191,15 @@ static void OpenGlobalCameraFromIP(const std::string& rtspUrl) {
 	std::lock_guard<std::mutex> lock(g_frameMutex);
 	if (g_cap) { delete g_cap; g_cap = nullptr; }
 	g_cap = new cv::VideoCapture(rtspUrl);
-	g_frameSeq_online = 0;
+	
+	// [FIX] Network stream optimization
 	if (g_cap->isOpened()) {
+		g_cap->set(cv::CAP_PROP_BUFFERSIZE, NETWORK_BUFFER_SIZE); // Reduce latency
 		g_cameraFPS = g_cap->get(cv::CAP_PROP_FPS);
 		if (g_cameraFPS <= 0) g_cameraFPS = 30.0;
 	}
+	
+	g_frameSeq_online = 0;
 	ResetParkingCache_Online();
 	
 	std::lock_guard<std::mutex> slock(g_onlineStateMutex);
@@ -612,6 +620,7 @@ private: bool useBuffer1;
 private: System::Windows::Forms::Label^ label1;
 
 	// *** [NEW] PARKING STATISTICS LABELS ***
+
 	private: System::Windows::Forms::Label^ label5_online;
 	private: System::Windows::Forms::Label^ label6_online;
 	private: System::Windows::Forms::Label^ label7_online;
@@ -672,7 +681,7 @@ private: System::Windows::Forms::Label^ label1;
 			   // timer1
 			   // 
 			   this->timer1->Enabled = true;
-			   this->timer1->Interval = 15;
+			   this->timer1->Interval = 33; // [FIX] Changed from 15ms to 33ms (~30 FPS UI, matches camera FPS)
 			   this->timer1->Tick += gcnew System::EventHandler(this, &UploadForm::timer1_Tick);
 			   // 
 			   // pictureBox1
@@ -1013,11 +1022,10 @@ private: System::Windows::Forms::Label^ label1;
 
 			if (!finalFrame.empty()) {
 				UpdatePictureBox(finalFrame);
-				// Check for violations
-				bool parkingEnabled = g_parkingEnabled_online.load(); // [PHASE 1 FIX] Use atomic load
+				// Check for violations (no need to clone, just read-only access)
+				bool parkingEnabled = g_parkingEnabled_online.load();
 				if (parkingEnabled) {
-					cv::Mat frameCopy = finalFrame.clone();
-					CheckViolations_Online(frameCopy);
+					CheckViolations_Online(finalFrame); // [FIX] Pass by reference, no clone
 				}
 			}
 
@@ -1033,7 +1041,7 @@ private: System::Windows::Forms::Label^ label1;
 				state = g_onlineState;
 			}
 
-			bool parkingEnabledForStats = g_parkingEnabled_online.load(); // [PHASE 1 FIX] Use atomic load
+			bool parkingEnabledForStats = g_parkingEnabled_online.load();
 			if (parkingEnabledForStats && !state.slotStatuses.empty()) {
 				int emptyCount = 0;
 				int occupiedCount = 0;
@@ -1141,16 +1149,16 @@ private: System::Windows::Forms::Label^ label1;
 				long long currentSeq;
 				{
 					std::lock_guard<std::mutex> lock(g_frameMutex);
-					g_latestRawFrame = tempFrame.clone(); // [PHASE 1 FIX] Deep copy
+					g_latestRawFrame = tempFrame; // [FIX] Use shallow copy (swap later)
 					g_frameSeq_online++;
 					currentSeq = g_frameSeq_online;
 				}
 
-				// [PHASE 2] Frame Drop Logic
+				// [FIX] Relaxed frame drop logic (10 frames tolerance instead of 3)
 				bool shouldDrop = false;
 				{
 					std::lock_guard<std::mutex> lock(g_processedMutex_online);
-					if (currentSeq - g_processedSeq_online > 3) {
+					if (currentSeq - g_processedSeq_online > MAX_FRAME_LAG_ONLINE) {
 						shouldDrop = true;
 						g_droppedFrames_online++;
 					}
@@ -1162,7 +1170,7 @@ private: System::Windows::Forms::Label^ label1;
 
 					if (!renderedFrame.empty()) {
 						std::lock_guard<std::mutex> lock(g_processedMutex_online);
-						g_processedFrame_online = renderedFrame.clone();
+						g_processedFrame_online = renderedFrame; // [FIX] Shallow copy
 						g_processedSeq_online = currentSeq;
 						g_processedFramesCount_online++;
 					}
@@ -1172,8 +1180,12 @@ private: System::Windows::Forms::Label^ label1;
 				if (cv::getTickCount() > nextTick) nextTick = cv::getTickCount();
 			}
 			else {
-				if (g_cap && g_cap->isOpened()) break;
-				Threading::Thread::Sleep(100);
+				if (g_cap && g_cap->isOpened()) {
+					// [FIX] Don't break immediately, might be temporary network hiccup
+					Threading::Thread::Sleep(50);
+					continue;
+				}
+				break;
 			}
 		}
 	}
@@ -1504,7 +1516,7 @@ private: System::Void UploadForm_FormClosing(System::Object^ sender, FormClosing
 			pbScreenshot->Location = System::Drawing::Point(5, 5);
 			pbScreenshot->Size = System::Drawing::Size(240, 100);
 			pbScreenshot->Cursor = System::Windows::Forms::Cursors::Hand;
-			pbScreenshot->Click += gcnew System::EventHandler(this, &UploadForm::OnViolationItemClick_Online);
+					pbScreenshot->Click += gcnew System::EventHandler(this, &UploadForm::OnViolationItemClick_Online);
 			itemPanel->Controls->Add(pbScreenshot);
 
 			Label^ lblInfo = gcnew Label();
@@ -1572,7 +1584,7 @@ private: void CheckViolations_Online(cv::Mat& currentFrame) {
 					
 					cv::Rect safeBbox = car.bbox & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
 					if (safeBbox.area() > 0) {
-						cv::Mat croppedFrame = currentFrame(safeBbox).clone();
+						cv::Mat croppedFrame = currentFrame(safeBbox).clone(); // [FIX] Clone only when capturing
 						AddViolationRecord_Online(car.id, croppedFrame, L"Overstay", currentFrame, car.bbox);
 					}
 				}
@@ -1593,7 +1605,7 @@ private: void CheckViolations_Online(cv::Mat& currentFrame) {
 					if (car.id == violatingId) {
 						cv::Rect safeBbox = car.bbox & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
 						if (safeBbox.area() > 0) {
-							cv::Mat croppedFrame = currentFrame(safeBbox).clone();
+							cv::Mat croppedFrame = currentFrame(safeBbox).clone(); // [FIX] Clone only when capturing
 							AddViolationRecord_Online(violatingId, croppedFrame, L"Wrong Slot", currentFrame, car.bbox);
 						}
 						break;
