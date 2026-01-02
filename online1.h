@@ -1,4 +1,5 @@
 ﻿#pragma once
+#define NOMINMAX // [PHASE 1 FIX] Move to top BEFORE any includes
 #include <msclr/marshal_cppstd.h>
 #include <string>
 #include <vector>
@@ -9,7 +10,6 @@
 #include "ViolationDetailForm.h"
 
 #pragma managed(push, off)
-#define NOMINMAX
 #include <opencv2/opencv.hpp>
 #include <opencv2/dnn.hpp>
 #include <cstdlib>
@@ -17,6 +17,8 @@
 #include <cmath>
 #include <mutex>
 #include <set>
+#include <chrono> // [PHASE 1] Add for future use
+#include <atomic> // [PHASE 1] Add for atomic operations
 
 // ==========================================
 //  LAYER 1: SHARED DATA
@@ -51,7 +53,7 @@ static double g_cameraFPS = 30.0;
 
 static std::mutex g_aiMutex_online;
 static bool g_modelReady = false;
-static bool g_parkingEnabled_online = false;
+static std::atomic<bool> g_parkingEnabled_online(false); // [PHASE 1 FIX] Use atomic for thread safety
 
 static const int YOLO_INPUT_SIZE = 640;
 static const float CONF_THRESHOLD = 0.25f;
@@ -71,11 +73,61 @@ static cv::Mat g_processedFrame_online;
 static long long g_processedSeq_online = 0;
 static std::mutex g_processedMutex_online;
 
+// *** [PHASE 2] PERFORMANCE OPTIMIZATION ***
+static std::chrono::steady_clock::time_point g_lastViolationCheck_online = std::chrono::steady_clock::now();
+static const int VIOLATION_CHECK_INTERVAL_MS_ONLINE = 500;
+
+static std::atomic<int> g_droppedFrames_online(0);
+static std::atomic<int> g_processedFramesCount_online(0);
+
+// [FIX] Stream stability improvements
+static const int MAX_FRAME_LAG_ONLINE = 10; // Relaxed from 3 to 10 frames
+static const int NETWORK_BUFFER_SIZE = 5;    // Network jitter buffer
+
+// *** [PHASE 3] MEMORY OPTIMIZATION ***
+
+struct CachedLabel_Online {
+	std::string text;
+	cv::Size size;
+	int baseline;
+	bool isViolating;
+	int classId;
+	
+	CachedLabel_Online() : baseline(0), isViolating(false), classId(-1) {}
+};
+
+static std::map<int, CachedLabel_Online> g_labelCache_online;
+static cv::Mat g_redOverlayBuffer_online; // [PHASE 3] Reusable red overlay buffer
+
+// [PHASE 3] FPS Monitor
+struct FPSMonitor_Online {
+	double alpha = 0.1;
+	double avgFPS = 0.0;
+	long long lastTick = 0;
+	
+	void update() {
+		long long currentTick = cv::getTickCount();
+		if (lastTick != 0) {
+			double timeSec = (currentTick - lastTick) / cv::getTickFrequency();
+			if (timeSec > 0) {
+				double fps = 1.0 / timeSec;
+				if (avgFPS == 0) avgFPS = fps;
+				else avgFPS = avgFPS * (1.0 - alpha) + fps * alpha;
+			}
+		}
+		lastTick = currentTick;
+	}
+};
+
+static FPSMonitor_Online g_fpsMonitor_online;
+
 // --- Helper Functions ---
 
 static void ResetParkingCache_Online() {
 	g_cachedParkingOverlay_online = cv::Mat();
 	g_lastDrawnStatus_online.clear();
+	g_labelCache_online.clear(); // [PHASE 3] Clear label cache
+	g_redOverlayBuffer_online = cv::Mat(); // [PHASE 3] Clear red overlay buffer
 }
 
 static cv::Mat FormatToLetterbox(const cv::Mat& source, int width, int height, float& ratio, int& dw, int& dh) {
@@ -106,7 +158,7 @@ static cv::Mat FormatToLetterbox(const cv::Mat& source, int width, int height, f
 static void GetRawFrameOnline(cv::Mat& outFrame, long long& outSeq) {
 	std::lock_guard<std::mutex> lock(g_frameMutex);
 	if (!g_latestRawFrame.empty()) {
-		outFrame = g_latestRawFrame;
+		outFrame = g_latestRawFrame; // [FIX] Shallow copy for speed (AI thread clones if needed)
 		outSeq = g_frameSeq_online;
 	}
 }
@@ -115,7 +167,7 @@ static void GetRawFrameOnline(cv::Mat& outFrame, long long& outSeq) {
 static void GetProcessedFrameOnline(cv::Mat& outFrame, long long& outSeq) {
 	std::lock_guard<std::mutex> lock(g_processedMutex_online);
 	if (!g_processedFrame_online.empty()) {
-		outFrame = g_processedFrame_online;
+		outFrame = g_processedFrame_online; // [FIX] Shallow copy for speed
 		outSeq = g_processedSeq_online;
 	}
 }
@@ -139,11 +191,15 @@ static void OpenGlobalCameraFromIP(const std::string& rtspUrl) {
 	std::lock_guard<std::mutex> lock(g_frameMutex);
 	if (g_cap) { delete g_cap; g_cap = nullptr; }
 	g_cap = new cv::VideoCapture(rtspUrl);
-	g_frameSeq_online = 0;
+	
+	// [FIX] Network stream optimization
 	if (g_cap->isOpened()) {
+		g_cap->set(cv::CAP_PROP_BUFFERSIZE, NETWORK_BUFFER_SIZE); // Reduce latency
 		g_cameraFPS = g_cap->get(cv::CAP_PROP_FPS);
 		if (g_cameraFPS <= 0) g_cameraFPS = 30.0;
 	}
+	
+	g_frameSeq_online = 0;
 	ResetParkingCache_Online();
 	
 	std::lock_guard<std::mutex> slock(g_onlineStateMutex);
@@ -198,10 +254,27 @@ static bool LoadParkingTemplate_Online(const std::string& filename) {
 	bool s2 = g_pm_display_online->loadTemplate(filename);
 
 	if (s1 && s2) {
-		g_parkingEnabled_online = true;
+		g_parkingEnabled_online.store(true); // [PHASE 1 FIX] Use atomic store
 		return true;
 	}
 	return false;
+}
+
+// *** [NEW] CREATE VIOLATION VISUALIZATION ***
+static cv::Mat CreateViolationVisualization(cv::Mat fullFrame, cv::Rect carBox) {
+	if (fullFrame.empty()) return cv::Mat();
+	
+	cv::Mat result = fullFrame.clone();
+	result = result * 0.3;
+	
+	cv::Rect safeBbox = carBox & cv::Rect(0, 0, fullFrame.cols, fullFrame.rows);
+	if (safeBbox.area() > 0) {
+		cv::Mat carROI = fullFrame(safeBbox).clone();
+		carROI.copyTo(result(safeBbox));
+		cv::rectangle(result, safeBbox, cv::Scalar(0, 255, 255), 3);
+	}
+	
+	return result;
 }
 
 // *** WORKER PROCESS (AI Thread) ***
@@ -298,7 +371,8 @@ static void ProcessFrameOnline(const cv::Mat& inputFrame, long long frameSeq) {
 		std::map<int, float> calculatedOccupancy;
 		std::set<int> violations;
 
-		if (g_parkingEnabled_online && g_pm_logic_online) {
+		bool parkingEnabled = g_parkingEnabled_online.load(); // [PHASE 1 FIX] Use atomic load
+		if (parkingEnabled && g_pm_logic_online) {
 			static bool templateSet_online = false;
 			if (!templateSet_online) {
 				g_pm_logic_online->setTemplateFrame(inputFrame);
@@ -347,6 +421,9 @@ static void ProcessFrameOnline(const cv::Mat& inputFrame, long long frameSeq) {
 static void DrawSceneOnline(const cv::Mat& frame, long long displaySeq, cv::Mat& outResult) {
 	if (frame.empty()) return;
 
+	// [PHASE 3] Update FPS
+	g_fpsMonitor_online.update();
+
 	if (g_drawingBuffer_online.size() != frame.size() || g_drawingBuffer_online.type() != frame.type()) {
 		g_drawingBuffer_online.create(frame.size(), frame.type());
 	}
@@ -362,7 +439,8 @@ static void DrawSceneOnline(const cv::Mat& frame, long long displaySeq, cv::Mat&
 	bool isFuture = (state.frameSequence > displaySeq);
 
 	// Parking Layer
-	if (g_parkingEnabled_online && g_pm_display_online) {
+	bool parkingEnabled = g_parkingEnabled_online.load(); // [PHASE 1 FIX] Use atomic load
+	if (parkingEnabled && g_pm_display_online) {
 		bool statusChanged = (state.slotStatuses != g_lastDrawnStatus_online);
 		bool noCache = g_cachedParkingOverlay_online.empty() || g_cachedParkingOverlay_online.size() != outResult.size();
 
@@ -388,8 +466,13 @@ static void DrawSceneOnline(const cv::Mat& frame, long long displaySeq, cv::Mat&
 
 	// Car Layer
 	if (!isFuture) {
+		// [PHASE 3] Track cars in current frame for GC
+		std::set<int> currentFrameCarIds;
+		
 		for (const auto& obj : state.cars) {
 			if (obj.classId >= 0 && obj.classId < g_classes.size()) {
+				currentFrameCarIds.insert(obj.id);
+				
 				cv::Rect box = obj.bbox;
 				bool isViolating = (state.violatingCarIds.count(obj.id) > 0);
 
@@ -397,8 +480,11 @@ static void DrawSceneOnline(const cv::Mat& frame, long long displaySeq, cv::Mat&
 					cv::Rect roi = box & cv::Rect(0, 0, outResult.cols, outResult.rows);
 					if (roi.area() > 0) {
 						cv::Mat roiMat = outResult(roi);
-						cv::Mat colorBlock(roi.size(), CV_8UC3, cv::Scalar(0, 0, 255));
-						cv::addWeighted(roiMat, 0.6, colorBlock, 0.4, 0, roiMat);
+						// [PHASE 3] Reuse red overlay buffer
+						if (g_redOverlayBuffer_online.size() != roi.size() || g_redOverlayBuffer_online.type() != CV_8UC3) {
+							g_redOverlayBuffer_online = cv::Mat(roi.size(), CV_8UC3, cv::Scalar(0, 0, 255));
+						}
+						cv::addWeighted(roiMat, 0.6, g_redOverlayBuffer_online, 0.4, 0, roiMat);
 					}
 					cv::rectangle(outResult, box, cv::Scalar(0, 0, 255), 2);
 				}
@@ -406,47 +492,61 @@ static void DrawSceneOnline(const cv::Mat& frame, long long displaySeq, cv::Mat&
 					cv::rectangle(outResult, box, g_colors[obj.classId], 2);
 				}
 
-				std::string label = "ID:" + std::to_string(obj.id);
-				if (isViolating) label += " [VIOLATION]";
-				else if (!g_parkingEnabled_online) label += " " + g_classes[obj.classId];
-
-				int baseline;
-				cv::Size textSize = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
+				// [PHASE 3] Label Caching Logic
+				bool needsUpdate = false;
+				auto it = g_labelCache_online.find(obj.id);
+				
+				if (it == g_labelCache_online.end()) {
+					needsUpdate = true;
+				}
+				else {
+					CachedLabel_Online& cached = it->second;
+					if (cached.isViolating != isViolating || cached.classId != obj.classId) {
+						needsUpdate = true;
+					}
+					if (cached.text.empty()) needsUpdate = true;
+				}
+				
+				if (needsUpdate) {
+					CachedLabel_Online cl;
+					cl.isViolating = isViolating;
+					cl.classId = obj.classId;
+					cl.text = "ID:" + std::to_string(obj.id);
+					if (isViolating) cl.text += " [VIOLATION]";
+					else if (!parkingEnabled) cl.text += " " + g_classes[obj.classId];
+					
+					cl.size = cv::getTextSize(cl.text, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &cl.baseline);
+					g_labelCache_online[obj.id] = cl;
+				}
+				
+				// Draw using Cache
+				CachedLabel_Online& labelInfo = g_labelCache_online[obj.id];
 				cv::Scalar labelBg = isViolating ? cv::Scalar(0, 0, 255) : g_colors[obj.classId];
 
-				cv::rectangle(outResult, cv::Point(box.x, box.y - textSize.height - 5), cv::Point(box.x + textSize.width, box.y), labelBg, -1);
-				cv::putText(outResult, label, cv::Point(box.x, box.y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
+				cv::rectangle(outResult, cv::Point(box.x, box.y - labelInfo.size.height - 5), 
+							  cv::Point(box.x + labelInfo.size.width, box.y), labelBg, -1);
+				cv::putText(outResult, labelInfo.text, cv::Point(box.x, box.y - 5), 
+							cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
+			}
+		}
+		
+		// [PHASE 3] Cache Garbage Collection
+		if (g_labelCache_online.size() > 100 && g_labelCache_online.size() > currentFrameCarIds.size() * 2) {
+			auto it = g_labelCache_online.begin();
+			while (it != g_labelCache_online.end()) {
+				if (currentFrameCarIds.find(it->first) == currentFrameCarIds.end()) {
+					it = g_labelCache_online.erase(it);
+				}
+				else {
+					++it;
+				}
 			}
 		}
 	}
 
-	std::string stats = "Obj: " + std::to_string(state.cars.size());
+	// [PHASE 3] Draw Stats (Obj count + FPS)
+	std::string stats = "Obj: " + std::to_string(state.cars.size()) + " | FPS: " + std::to_string((int)g_fpsMonitor_online.avgFPS);
 	cv::putText(outResult, stats, cv::Point(10, 25), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
-}
-
-// *** [NEW] CREATE VIOLATION VISUALIZATION ***
-static cv::Mat CreateViolationVisualization(cv::Mat fullFrame, cv::Rect carBox) {
-	if (fullFrame.empty()) return cv::Mat();
-	
-	// 1. สำเนาของเฟรม
-	cv::Mat result = fullFrame.clone();
-	
-	// 2. ทำให้มืด 70% (เหลือ 30% ความสว่าง)
-	result = result * 0.3;
-	
-	// 3. ตัดเอาเฉพาะรถจากเฟรมสว่าง
-	cv::Rect safeBbox = carBox & cv::Rect(0, 0, fullFrame.cols, fullFrame.rows);
-	if (safeBbox.area() > 0) {
-		cv::Mat carROI = fullFrame(safeBbox).clone();
-		
-		// 4. วางรถสว่างกลับลงบนภาพมืด
-		carROI.copyTo(result(safeBbox));
-		
-		// 5. วาดกรอบสี่เหลี่ยมสว่าง (เหลือง)
-		cv::rectangle(result, safeBbox, cv::Scalar(0, 255, 255), 3);
-	}
-	
-	return result;
 }
 
 #pragma managed(pop)
@@ -473,6 +573,10 @@ namespace ConsoleApplication3 {
 			violationsList_online = gcnew System::Collections::Generic::List<ViolationRecord_Online^>();
 			violatingCarTimers_online = gcnew System::Collections::Generic::Dictionary<int, System::DateTime>();
 
+			// [UI FIX] Disable Live Camera until template is loaded
+			btnLiveCamera->Enabled = false;
+			btnLiveCamera->BackColor = System::Drawing::Color::Gray;
+
 			BackgroundWorker^ modelLoader = gcnew BackgroundWorker();
 			modelLoader->DoWork += gcnew DoWorkEventHandler(this, &UploadForm::LoadModel_DoWork);
 			modelLoader->RunWorkerCompleted += gcnew RunWorkerCompletedEventHandler(this, &UploadForm::LoadModel_Completed);
@@ -485,8 +589,8 @@ namespace ConsoleApplication3 {
 			if (components) delete components;
 			if (g_pm_logic_online) { delete g_pm_logic_online; g_pm_logic_online = nullptr; }
 			if (g_pm_display_online) { delete g_pm_display_online; g_pm_display_online = nullptr; }
-			if (bmpBuffer1) delete bmpBuffer1;
-			if (bmpBuffer2) delete bmpBuffer2;
+			// [PHASE 1 FIX] Don't delete managed Bitmaps - GC will handle them
+			// bmpBuffer1 and bmpBuffer2 are Bitmap^ (managed objects)
 		}
 
 	private: System::Windows::Forms::Button^ button1;
@@ -520,6 +624,7 @@ private: bool useBuffer1;
 private: System::Windows::Forms::Label^ label1;
 
 	// *** [NEW] PARKING STATISTICS LABELS ***
+
 	private: System::Windows::Forms::Label^ label5_online;
 	private: System::Windows::Forms::Label^ label6_online;
 	private: System::Windows::Forms::Label^ label7_online;
@@ -580,7 +685,7 @@ private: System::Windows::Forms::Label^ label1;
 			   // timer1
 			   // 
 			   this->timer1->Enabled = true;
-			   this->timer1->Interval = 15;
+			   this->timer1->Interval = 33; // [FIX] Changed from 15ms to 33ms (~30 FPS UI, matches camera FPS)
 			   this->timer1->Tick += gcnew System::EventHandler(this, &UploadForm::timer1_Tick);
 			   // 
 			   // pictureBox1
@@ -884,17 +989,25 @@ private: System::Windows::Forms::Label^ label1;
 
 		Bitmap^ targetBmp = useBuffer1 ? bmpBuffer1 : bmpBuffer2;
 
+		// [PHASE 1 FIX] Don't manually delete managed Bitmap - let GC handle it
 		if (targetBmp == nullptr || targetBmp->Width != w || targetBmp->Height != h) {
-			if (targetBmp != nullptr) delete targetBmp;
 			targetBmp = gcnew Bitmap(w, h, System::Drawing::Imaging::PixelFormat::Format24bppRgb);
-			if (useBuffer1) bmpBuffer1 = targetBmp; else bmpBuffer2 = targetBmp;
+			if (useBuffer1) bmpBuffer1 = targetBmp; 
+			else bmpBuffer2 = targetBmp;
 		}
 
 		System::Drawing::Rectangle rect = System::Drawing::Rectangle(0, 0, w, h);
 		System::Drawing::Imaging::BitmapData^ bmpData = targetBmp->LockBits(rect, System::Drawing::Imaging::ImageLockMode::WriteOnly, targetBmp->PixelFormat);
-		for (int y = 0; y < h; y++) {
-			memcpy((unsigned char*)bmpData->Scan0.ToPointer() + y * bmpData->Stride, mat.data + y * mat.step, w * 3);
+		
+		// [PHASE 2] Optimized memcpy - single copy when possible
+		if (bmpData->Stride == mat.step) {
+			memcpy((unsigned char*)bmpData->Scan0.ToPointer(), mat.data, (size_t)h * mat.step);
+		} else {
+			for (int y = 0; y < h; y++) {
+				memcpy((unsigned char*)bmpData->Scan0.ToPointer() + y * bmpData->Stride, mat.data + y * mat.step, w * 3);
+			}
 		}
+		
 		targetBmp->UnlockBits(bmpData);
 
 		pictureBox1->Image = targetBmp;
@@ -913,10 +1026,10 @@ private: System::Windows::Forms::Label^ label1;
 
 			if (!finalFrame.empty()) {
 				UpdatePictureBox(finalFrame);
-				// Check for violations
-				if (g_parkingEnabled_online) {
-					cv::Mat frameCopy = finalFrame.clone();
-					CheckViolations_Online(frameCopy);
+				// Check for violations (no need to clone, just read-only access)
+				bool parkingEnabled = g_parkingEnabled_online.load();
+				if (parkingEnabled) {
+					CheckViolations_Online(finalFrame); // [FIX] Pass by reference, no clone
 				}
 			}
 
@@ -932,7 +1045,8 @@ private: System::Windows::Forms::Label^ label1;
 				state = g_onlineState;
 			}
 
-			if (g_parkingEnabled_online && !state.slotStatuses.empty()) {
+			bool parkingEnabledForStats = g_parkingEnabled_online.load();
+			if (parkingEnabledForStats && !state.slotStatuses.empty()) {
 				int emptyCount = 0;
 				int occupiedCount = 0;
 
@@ -974,9 +1088,9 @@ private: System::Windows::Forms::Label^ label1;
 	private: System::Void LoadModel_Completed(System::Object^ sender, RunWorkerCompletedEventArgs^ e) {
 		if (e->Result != nullptr && e->Result->GetType() == bool::typeid && safe_cast<bool>(e->Result)) {
 			this->Text = L"Online Mode - YOLO Detection (Ready)";
-			btnLiveCamera->Enabled = true;
+			// [UI FIX] Only enable template button, Live Camera stays disabled
 			btnLoadParkingTemplate->Enabled = true;
-			MessageBox::Show("Model loaded!", "Success", MessageBoxButtons::OK, MessageBoxIcon::Information);
+			MessageBox::Show("Model loaded!\n\n⚠️ Please load a parking template before starting live camera.", "Success", MessageBoxButtons::OK, MessageBoxIcon::Information);
 		}
 		else {
 			MessageBox::Show("Error loading model", "Error", MessageBoxButtons::OK, MessageBoxIcon::Error);
@@ -986,6 +1100,12 @@ private: System::Windows::Forms::Label^ label1;
 	private: void StartProcessing() {
 		shouldStop = false;
 		isProcessing = true;
+		
+		// [PHASE 2] Reset performance counters
+		g_droppedFrames_online = 0;
+		g_processedFramesCount_online = 0;
+		g_lastViolationCheck_online = std::chrono::steady_clock::now();
+		
 		{
 			std::lock_guard<std::mutex> lock(g_onlineStateMutex);
 			g_onlineState = OnlineAppState();
@@ -1033,26 +1153,43 @@ private: System::Windows::Forms::Label^ label1;
 				long long currentSeq;
 				{
 					std::lock_guard<std::mutex> lock(g_frameMutex);
-					g_latestRawFrame = tempFrame;
+					g_latestRawFrame = tempFrame; // [FIX] Use shallow copy (swap later)
 					g_frameSeq_online++;
 					currentSeq = g_frameSeq_online;
 				}
 
-				cv::Mat renderedFrame;
-				DrawSceneOnline(tempFrame, currentSeq, renderedFrame);
-
-				if (!renderedFrame.empty()) {
+				// [FIX] Relaxed frame drop logic (10 frames tolerance instead of 3)
+				bool shouldDrop = false;
+				{
 					std::lock_guard<std::mutex> lock(g_processedMutex_online);
-					g_processedFrame_online = renderedFrame.clone();
-					g_processedSeq_online = currentSeq;
+					if (currentSeq - g_processedSeq_online > MAX_FRAME_LAG_ONLINE) {
+						shouldDrop = true;
+						g_droppedFrames_online++;
+					}
+				}
+
+				if (!shouldDrop) {
+					cv::Mat renderedFrame;
+					DrawSceneOnline(tempFrame, currentSeq, renderedFrame);
+
+					if (!renderedFrame.empty()) {
+						std::lock_guard<std::mutex> lock(g_processedMutex_online);
+						g_processedFrame_online = renderedFrame; // [FIX] Shallow copy
+						g_processedSeq_online = currentSeq;
+						g_processedFramesCount_online++;
+					}
 				}
 
 				nextTick += (long long)(ticksPerFrame * tickFreq / 1000.0);
 				if (cv::getTickCount() > nextTick) nextTick = cv::getTickCount();
 			}
 			else {
-				if (g_cap && g_cap->isOpened()) break;
-				Threading::Thread::Sleep(100);
+				if (g_cap && g_cap->isOpened()) {
+					// [FIX] Don't break immediately, might be temporary network hiccup
+					Threading::Thread::Sleep(50);
+					continue;
+				}
+				break;
 			}
 		}
 	}
@@ -1079,6 +1216,22 @@ private: System::Void processingWorker_DoWork(System::Object^ sender, DoWorkEven
 }
 
 private: System::Void btnLiveCamera_Click(System::Object^ sender, System::EventArgs^ e) {
+	// [UI FIX] Check if template is loaded before proceeding
+	if (!g_parkingEnabled_online.load() || !g_pm_logic_online || !g_pm_display_online) {
+		MessageBox::Show(
+			"⚠️ Parking template not loaded!\n\n" +
+			"Please click 'Load Template' button first before starting live camera.\n\n" +
+			"Steps:\n" +
+			"1. Click 'Load Template' button\n" +
+			"2. Select a parking template (.xml file)\n" +
+			"3. Then start Live Camera",
+			"Template Required",
+			MessageBoxButtons::OK,
+			MessageBoxIcon::Warning
+		);
+		return;
+	}
+
 	StopProcessing();
 	
 	Form^ ipForm = gcnew Form();
@@ -1097,58 +1250,58 @@ private: System::Void btnLiveCamera_Click(System::Object^ sender, System::EventA
 
 	Label^ labelIP = gcnew Label();
 	labelIP->Text = L"IP Address:";
-	labelIP->Location = System::Drawing::Point(20, 60);
-	labelIP->Size = System::Drawing::Size(100, 20);
+labelIP->Location = System::Drawing::Point(20, 60);
+labelIP->Size = System::Drawing::Size(100, 20);
 
-	TextBox^ textBoxIP = gcnew TextBox();
-	textBoxIP->Location = System::Drawing::Point(120, 58);
-	textBoxIP->Size = System::Drawing::Size(290, 25);
-	textBoxIP->Text = L"192.168.1.100";
+TextBox^ textBoxIP = gcnew TextBox();
+textBoxIP->Location = System::Drawing::Point(120, 58);
+textBoxIP->Size = System::Drawing::Size(290, 25);
+textBoxIP->Text = L"192.168.1.100";
 
-	Label^ labelPort = gcnew Label();
-	labelPort->Text = L"Port:";
-	labelPort->Location = System::Drawing::Point(20, 95);
-	labelPort->Size = System::Drawing::Size(100, 20);
+Label^ labelPort = gcnew Label();
+labelPort->Text = L"Port:";
+labelPort->Location = System::Drawing::Point(20, 95);
+labelPort->Size = System::Drawing::Size(100, 20);
 
-	TextBox^ textBoxPort = gcnew TextBox();
-	textBoxPort->Location = System::Drawing::Point(120, 93);
-	textBoxPort->Size = System::Drawing::Size(290, 25);
-	textBoxPort->Text = L"8080";
+TextBox^ textBoxPort = gcnew TextBox();
+textBoxPort->Location = System::Drawing::Point(120, 93);
+textBoxPort->Size = System::Drawing::Size(290, 25);
+textBoxPort->Text = L"8080";
 
-	Label^ labelPath = gcnew Label();
-	labelPath->Text = L"Path:";
-	labelPath->Location = System::Drawing::Point(20, 130);
-	labelPath->Size = System::Drawing::Size(100, 20);
+Label^ labelPath = gcnew Label();
+labelPath->Text = L"Path:";
+labelPath->Location = System::Drawing::Point(20, 130);
+labelPath->Size = System::Drawing::Size(100, 20);
 
-	TextBox^ textBoxPath = gcnew TextBox();
-	textBoxPath->Location = System::Drawing::Point(120, 128);
-	textBoxPath->Size = System::Drawing::Size(290, 25);
-	textBoxPath->Text = L"/video";
+TextBox^ textBoxPath = gcnew TextBox();
+textBoxPath->Location = System::Drawing::Point(120, 128);
+textBoxPath->Size = System::Drawing::Size(290, 25);
+textBoxPath->Text = L"/video";
 
-	Label^ labelExample = gcnew Label();
-	labelExample->Text = L"Example apps: IP Webcam, DroidCam, or iVCam\nMake sure both devices are on the same WiFi network";
-	labelExample->Location = System::Drawing::Point(20, 165);
-	labelExample->Size = System::Drawing::Size(400, 35);
-	labelExample->Font = gcnew System::Drawing::Font(L"Segoe UI", 8, FontStyle::Italic);
-	labelExample->ForeColor = System::Drawing::Color::Gray;
+Label^ labelExample = gcnew Label();
+labelExample->Text = L"Example apps: IP Webcam, DroidCam, or iVCam\nMake sure both devices are on the same WiFi network";
+labelExample->Location = System::Drawing::Point(20, 165);
+labelExample->Size = System::Drawing::Size(400, 35);
+labelExample->Font = gcnew System::Drawing::Font(L"Segoe UI", 8, FontStyle::Italic);
+labelExample->ForeColor = System::Drawing::Color::Gray;
 
-	Button^ btnConnect = gcnew Button();
-	btnConnect->Text = L"Connect";
-	btnConnect->Location = System::Drawing::Point(120, 215);
-	btnConnect->Size = System::Drawing::Size(100, 35);
-	btnConnect->BackColor = System::Drawing::Color::FromArgb(40, 167, 69);
-	btnConnect->ForeColor = System::Drawing::Color::White;
-	btnConnect->FlatStyle = FlatStyle::Flat;
-	btnConnect->DialogResult = System::Windows::Forms::DialogResult::OK;
+Button^ btnConnect = gcnew Button();
+btnConnect->Text = L"Connect";
+btnConnect->Location = System::Drawing::Point(120, 215);
+btnConnect->Size = System::Drawing::Size(100, 35);
+btnConnect->BackColor = System::Drawing::Color::FromArgb(40, 167, 69);
+btnConnect->ForeColor = System::Drawing::Color::White;
+btnConnect->FlatStyle = FlatStyle::Flat;
+btnConnect->DialogResult = System::Windows::Forms::DialogResult::OK;
 
-	Button^ btnCancel = gcnew Button();
-	btnCancel->Text = L"Cancel";
-	btnCancel->Location = System::Drawing::Point(230, 215);
-	btnCancel->Size = System::Drawing::Size(100, 35);
-	btnCancel->BackColor = System::Drawing::Color::FromArgb(220, 53, 69);
-	btnCancel->ForeColor = System::Drawing::Color::White;
-	btnCancel->FlatStyle = FlatStyle::Flat;
-	btnCancel->DialogResult = System::Windows::Forms::DialogResult::Cancel;
+Button^ btnCancel = gcnew Button();
+btnCancel->Text = L"Cancel";
+btnCancel->Location = System::Drawing::Point(230, 215);
+btnCancel->Size = System::Drawing::Size(100, 35);
+btnCancel->BackColor = System::Drawing::Color::FromArgb(220, 53, 69);
+btnCancel->ForeColor = System::Drawing::Color::White;
+btnCancel->FlatStyle = FlatStyle::Flat;
+btnCancel->DialogResult = System::Windows::Forms::DialogResult::Cancel;
 
 	ipForm->Controls->Add(labelTitle);
 	ipForm->Controls->Add(labelIP);
@@ -1297,8 +1450,20 @@ private: System::Void btnLoadParkingTemplate_Click(System::Object^ sender, Syste
 		std::string fileName = msclr::interop::marshal_as<std::string>(ofd->FileName);
 		if (LoadParkingTemplate_Online(fileName)) {
 			chkParkingMode->Checked = true;
-			MessageBox::Show("Template loaded!\n\nParking slot detection is now active.\nViolations (cars parked outside slots) will be marked in RED.", 
-				"Success", MessageBoxButtons::OK, MessageBoxIcon::Information);
+			
+			// [UI FIX] Enable Live Camera button after successful template load
+			btnLiveCamera->Enabled = true;
+			btnLiveCamera->BackColor = System::Drawing::Color::Tomato;
+			
+			MessageBox::Show(
+				"✅ Template loaded successfully!\n\n" +
+				"Parking slot detection is now active.\n" +
+				"Violations (cars parked outside slots) will be marked in RED.\n\n" +
+				"You can now start Live Camera.", 
+				"Success", 
+				MessageBoxButtons::OK, 
+				MessageBoxIcon::Information
+			);
 		}
 		else {
 			MessageBox::Show("Failed to load template!", "Error", MessageBoxButtons::OK, MessageBoxIcon::Error);
@@ -1307,7 +1472,7 @@ private: System::Void btnLoadParkingTemplate_Click(System::Object^ sender, Syste
 }
 
 private: System::Void chkParkingMode_CheckedChanged(System::Object^ sender, System::EventArgs^ e) {
-	g_parkingEnabled_online = chkParkingMode->Checked;
+	g_parkingEnabled_online.store(chkParkingMode->Checked); // [PHASE 1 FIX] Use atomic store
 	if (chkParkingMode->Checked) {
 		label1->Text = L"Parking Mode ON";
 		label1->BackColor = System::Drawing::Color::LightGreen;
@@ -1383,7 +1548,7 @@ private: System::Void UploadForm_FormClosing(System::Object^ sender, FormClosing
 			pbScreenshot->Location = System::Drawing::Point(5, 5);
 			pbScreenshot->Size = System::Drawing::Size(240, 100);
 			pbScreenshot->Cursor = System::Windows::Forms::Cursors::Hand;
-			pbScreenshot->Click += gcnew System::EventHandler(this, &UploadForm::OnViolationItemClick_Online);
+					pbScreenshot->Click += gcnew System::EventHandler(this, &UploadForm::OnViolationItemClick_Online);
 			itemPanel->Controls->Add(pbScreenshot);
 
 			Label^ lblInfo = gcnew Label();
@@ -1428,7 +1593,16 @@ private: System::Void UploadForm_FormClosing(System::Object^ sender, FormClosing
 		}
 	}
 
-	private: void CheckViolations_Online(cv::Mat& currentFrame) {
+private: void CheckViolations_Online(cv::Mat& currentFrame) {
+			// [PHASE 2] Throttle violation checks to 500ms
+		auto now = std::chrono::steady_clock::now();
+		auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_lastViolationCheck_online).count();
+		
+		if (elapsed < VIOLATION_CHECK_INTERVAL_MS_ONLINE) {
+			return;
+		}
+		g_lastViolationCheck_online = now;
+
 		OnlineAppState state;
 		{
 			std::lock_guard<std::mutex> lock(g_onlineStateMutex);
@@ -1442,7 +1616,7 @@ private: System::Void UploadForm_FormClosing(System::Object^ sender, FormClosing
 					
 					cv::Rect safeBbox = car.bbox & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
 					if (safeBbox.area() > 0) {
-						cv::Mat croppedFrame = currentFrame(safeBbox).clone();
+						cv::Mat croppedFrame = currentFrame(safeBbox).clone(); // [FIX] Clone only when capturing
 						AddViolationRecord_Online(car.id, croppedFrame, L"Overstay", currentFrame, car.bbox);
 					}
 				}
@@ -1463,10 +1637,10 @@ private: System::Void UploadForm_FormClosing(System::Object^ sender, FormClosing
 					if (car.id == violatingId) {
 						cv::Rect safeBbox = car.bbox & cv::Rect(0, 0, currentFrame.cols, currentFrame.rows);
 						if (safeBbox.area() > 0) {
-							cv::Mat croppedFrame = currentFrame(safeBbox).clone();
+							cv::Mat croppedFrame = currentFrame(safeBbox).clone(); // [FIX] Clone only when capturing
 							AddViolationRecord_Online(violatingId, croppedFrame, L"Wrong Slot", currentFrame, car.bbox);
 						}
-					 break;
+						break;
 					}
 				}
 			}
